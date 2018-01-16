@@ -1,14 +1,14 @@
 library(irlba)	# irlba
 library(fields)	# rdist
 library(gtools)	# ddirichlet
-library(cluster) # pam
 library(FNN)	# knnx.index
 library(MASS) # mvrnorm
 library(Matrix)
 library(igraph)	# get.shortest.paths
 library(gplots)	# colorpanel
 library(plotrix)	# draw.circle
-library(SummarizedExperiment)
+library(SummarizedExperiment) 	
+library(parallel) # mclapply
 
 
 #' Simulating time series single cell RNA-seq data
@@ -142,9 +142,12 @@ sim.rnaseq.ts <- function(N = 200, M = 50, K = 20, n.circle = 100, n.metacell = 
 #' @param X a normalized read count matrix where each row represents a gene and each column represents a cell
 #' @param K the number of metagenes
 #' @param time.table a cell by time point table indicating the source of each cell
-#' @param n.circle prototypes per layer (S)
-#' @param n.prototype the number of layers (R)
-#' @param n.prev the number of layers of convolving prototypes (R - rho)
+#' @param landscape the prototype landscape for TCM. The landscape need to be initialized by init.landscape(). 
+#' @param optimization.method the method for optimizing TCM, either 'batch' or 'stochastic' (default: stochastic)
+#' @param batch.size the size of randomly sampled cells for updating global variables in stochastic variational inference (default: 100).
+#'				Note that batch.size is ignored if 'optimization.method' is 'batch'
+#' @param max.iter maximum iterations (default: 100)
+#' @param mc.cores # of CPU cores for optimization (default: 1)
 #' 
 #' @return a tcm object
 #
@@ -166,14 +169,14 @@ sim.rnaseq.ts <- function(N = 200, M = 50, K = 20, n.circle = 100, n.metacell = 
 #'
 #' @export
 #' 
-tcm <- function(X, K = 10, time.table = NULL, landscape = NULL, optimization.method = 'stochastic', batch.size = NA, max.iter = 100, mc.cores = 1){
+tcm <- function(X, K = 10, time.table = NULL, landscape = NULL, optimization.method = 'stochastic', batch.size = 2000, max.iter = 100, mc.cores = 1){
 
 	N <- nrow(X)
 	M <- ncol(X)
 	eps <- .Machine$double.eps
 
-	if (is.null(time.table))
-		stop('time.table cannot be NULL')
+	if (is.null(time.table) && landscape[['type']] == 'temporal.convolving')
+		stop('time.table cannot be NULL if landscape$type is temporal.convolving')
 	
 	if (is.null(landscape))
 		stop('landscape cannot be NULL')
@@ -184,45 +187,40 @@ tcm <- function(X, K = 10, time.table = NULL, landscape = NULL, optimization.met
 	cat('-------------------------------------------------------------------------------------------------\n')
 	cat('topographic cell map\n')
 	cat('-------------------------------------------------------------------------------------------------\n')
-	cat(sprintf('number of input genes(N): %d\n', N))
-	cat(sprintf('number of input cells(M): %d\n', M))
+	cat(sprintf('[%s] number of input genes(N): %d\n', Sys.time(), N))
+	cat(sprintf('[%s] number of input cells(M): %d\n', Sys.time(), M))
+	cat(sprintf('[%s] number of metagenes(K): %d\n', Sys.time(), K))
+	cat(sprintf('[%s] optimization method: %s\n', Sys.time(), optimization.method))
+	cat(sprintf('[%s] number of cores: %d\n', Sys.time(), mc.cores))
+	if (!is.null(time.table))
+		cat(sprintf('[%s] number of time points: %d\n', Sys.time(), ncol(CT)))
 
-	cat(sprintf('[%s] initializing metagene coefficients and basis:', Sys.time()))
-	V <- t(irlba(scale(log(X + 1)), nu = 1, nv = K)$v)
+	cat(sprintf('[%s] initializing metagene coefficients and basis\n', Sys.time()))
+	V <- scale(t(irlba(scale(log(X + 1)), nu = 1, nv = K)$v))
 	a <- rep(0, M)	# the cell effect
 	U <- matrix(runif(N * K), N, K)
-	cat('\n')
 
-	for (t in ncol(CT):1){
-		m <- Matrix::rowSums(CT[, ncol(CT):t, drop = FALSE]) > 0	# cells for training TCM
-		mf <- tcm.core(X = X[, m], U = U, V = V[, m], a = a[m], landscape = landscape, CT = CT[m, ], optimization.method = optimization.method, update.beta = TRUE, max.iter = max.iter, batch.size = batch.size, mc.cores = mc.cores)
-		U <- mf$U
-		V[, m] <- mf$V
-		a[m] <- mf$a
-		Theta.free <- mf$Theta.free
+	if (landscape[['type']] == 'temporal.convolving'){	# initialization for landscape type = temporal.convolving
+		for (t in ncol(CT):2){
+			m <- Matrix::rowSums(CT[, t:ncol(CT), drop = FALSE]) > 0	#  cells for training TCM
+			cat(sprintf('[%s] initializing %d cells from time point(s) %d-%d\n', Sys.time(), sum(m), t, ncol(CT)))
+			mf <- tcm.core(X = X[, m], U = U, V = V[, m], a = a[m], landscape = landscape, CT = CT[m, ], optimization.method = optimization.method, update.beta = TRUE, batch.size = batch.size, max.iter = 50, mc.cores = mc.cores)
+			U <- mf$U
+			V[, m] <- mf$V
+			a[m] <- mf$a
+			landscape$Theta.free <- mf$Theta.free
+		}
+		cat(sprintf('[%s] fitting TCM\n', Sys.time()))
+		mf <- tcm.core(X = X, U = U, V = V, a = a, landscape = landscape, CT = CT, optimization.method = optimization.method, batch.size = batch.size, max.iter = max.iter, mc.cores = mc.cores)
+		mf$CT <- CT
+		mf$time <- time
 	}
 
-	mf$CT <- CT
 	mf$landscape <- landscape
-	mf$time <- time
 	class(mf) <- 'tcm'
 	mf
 
 } # end of tcm
-
-
-#' log density of Poission distribution
-#'
-ldpois <- function(k, mu){
-
-	mu <- mu + .Machine$double.eps
-
-	if (any(k <= -1))
-		stop('k must be greater than -1')
-	
-	k * log(mu) - mu - lgamma(k + 1)
-
-} # end of ldpois
 
 
 #' Computing y[i, j] = exp(x[i, j]) / sum(exp(x[, j]))
@@ -244,12 +242,12 @@ softmax <- function(x){
 #' @param mc.cores number of CPU cores (default: 1)
 #' @param max.size.per.batch maximum samples per batch
 #'
-tcm.core <- function(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NULL, C = NULL, optimization.method = 'batch', beta = 1, update.beta = TRUE, c0 = 0.001, d0 = 0.001, max.iter = 100, verbose = TRUE, batch.size = 20, decay.rate = 1, forgetting.rate = 0.75, test.size = 100, mc.cores = 8, max.size.per.batch = 1000){
+tcm.core <- function(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NULL, C = NULL, optimization.method = 'batch', beta = 1, update.beta = TRUE, c0 = 0.001, d0 = 0.001, max.iter = 100, verbose = TRUE, batch.size = 100, decay.rate = 1, forgetting.rate = 0.75, test.size = 100, mc.cores = 1, max.size.per.batch = 1000){
 
 	eps <- .Machine$double.eps
 
 	# the number of iterations for Newton step for optimizing V and V.var
-	max.iter2 <- switch(optimization.method, 'batch' = 10, 'stochastic' = 1)
+	max.iter2 <- switch(optimization.method, 'batch' = 50, 'stochastic' = 1)
 	
 	if (!is.null(landscape)){
 		Theta.free <- landscape$Theta.free
@@ -297,6 +295,8 @@ tcm.core <- function(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NUL
 	optval <- NULL
 	while (iter <= max.iter){
 
+		Theta.free.p <- Theta.free
+
 		# updating all local variables: E[V], E[exp(V)], a and E[Z]
 		localvar <- mclapply(1:n.batch, function(b){
 			m <- groups == b
@@ -314,14 +314,24 @@ tcm.core <- function(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NUL
 			)
 		}, mc.cores = mc.cores)
 
-		rho <- learning.rate(iter, decay.rate, forgetting.rate)
+		rho <- switch(optimization.method,
+			'stochastic' = learning.rate(iter, decay.rate, forgetting.rate),
+			'batch' = 1
+		)
 
-		# sampling a subset of samples(cells) for updating global variables
-		m <- lapply(1:n.batch, function(b) sample(1:size[b], max(1, round(batch.size / n.batch))) )
+		if (optimization.method == 'stochastic'){
+			# SVI: sampling a subset of samples(cells) for updating global variables
+			m <- lapply(1:n.batch, function(b) sample(1:size[b], min(max(1, round(batch.size / n.batch)), size[b])))
+		}else{
+			# batch optimization: use all the samples
+			m <- lapply(1:n.batch, function(b) 1:size[b])
+		}
 
 		# updating free prototypes Theta
 		SZS <- S %*% Diagonal(x = beta * Reduce('+', mclapply(1:n.batch, function(b) colSums(localvar[[b]]$Z[m[[b]], , drop = FALSE]), mc.cores = mc.cores))) %*% t(S)
-		SZSL.inv <- chol2inv(chol(as.matrix(SZS + L)))
+		tryCatch({
+			SZSL.inv <- chol2inv(chol(as.matrix(SZS + L)))
+		}, error = function(e) browser())	
 		Theta.free <- (1 - rho) * Theta.free + rho * beta * Reduce('+', mclapply(1:n.batch, function(b){
 			localvar[[b]]$V[, m[[b]], drop = FALSE] %*% localvar[[b]]$Z[m[[b]], , drop = FALSE] %*% t(S) %*% SZSL.inv
 		}, mc.cores = mc.cores))
@@ -334,10 +344,12 @@ tcm.core <- function(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NUL
 			exp(U.log)
 		}, mc.cores = mc.cores)) / n.batch
 
-		# updating beta
-		beta <- (1 - rho) * beta + rho * Reduce('+', mclapply(1:n.batch, function(b){
-			(K * sum(localvar[[b]]$Z[m[[b]], , drop = FALSE]) + 0.001) / (sum(localvar[[b]]$Z[m[[b]], , drop = FALSE] * rdist(t(localvar[[b]]$V[, m[[b]], drop = FALSE]), t(Theta))^2) + 0.001)
-		}, mc.cores = mc.cores)) / n.batch
+		if (update.beta){
+			# updating beta
+			beta <- (1 - rho) * beta + rho * Reduce('+', mclapply(1:n.batch, function(b){
+				(K * sum(localvar[[b]]$Z[m[[b]], , drop = FALSE]) + 0.001) / (sum(localvar[[b]]$Z[m[[b]], , drop = FALSE] * rdist(t(localvar[[b]]$V[, m[[b]], drop = FALSE]), t(Theta))^2) + 0.001)
+			}, mc.cores = mc.cores)) / n.batch
+		}
 
 		# updating Kappa/Pi.log
 		Kappa <- Reduce('+', mclapply(1:n.batch, function(b){
@@ -346,11 +358,9 @@ tcm.core <- function(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NUL
 		Pi.log <- (1 - rho) * Pi.log + rho * (digamma(Kappa) - matrix(digamma(rowSums(Kappa)), nc, H)) # E[log(pi)]
 
 		if (iter == 1 || iter %% 10 == 0){
-			if (verbose){
-				n.cluster <- length(unique(unlist(lapply(1:n.batch, function(b) max.col(localvar[[b]]$Z[m[[b]], , drop = FALSE])))))
-				cat(sprintf('[%s] iter=%5.d | mc.cores=%d | n.batch=%d | %s | # non-empty prototypes=%4.d | beta=%7.3f\n', Sys.time(), iter, mc.cores, n.batch, optimization.method, n.cluster, beta))
-				optval <- rbind(optval, data.frame(iter = iter, time = Sys.time(), n.cluster = n.cluster, beta = beta))
-			}
+			n.cluster <- length(unique(unlist(mclapply(1:n.batch, function(b) max.col(localvar[[b]]$Z), mc.cores = mc.cores))))
+			cat(sprintf('[%s] iter=%5.d | M=%d | n.batch=%d | # non-empty prototypes=%4.d | beta=%7.3f | d||Theta.free||=%7.3f\n', Sys.time(), iter, M, n.batch, n.cluster, beta, norm(Theta.free - Theta.free.p, '2')))
+			optval <- rbind(optval, data.frame(iter = iter, time = Sys.time(), n.cluster = n.cluster, beta = beta))
 		}
 		iter <- iter + 1
 	}
@@ -383,18 +393,19 @@ plot.tcm <- function(x, ...){
 
 	mf <- x
 
-	if (mf$landscape$type == 'tcm'){
-		H <- mf$landscape$H	# number of metacells
+	if (mf$landscape$type == 'temporal.convolving'){
+
+		H <- mf$landscape$H	# number of prototypes
 		K <- mf$landscape$K	# number of metagenes
 		M <- ncol(mf$V)	# number of cells
 		mem <- max.col(mf$Z)	# cluster membership
 		coord <- mf$landscape$Y.prototype
-		csize <- table(factor(mem, 1:H))	# size of cells that were assigned to each metacell
-		ncls <- sum(csize > 0)	# number of metacells that have at least one assigned cells
-		centers <- which(csize > 0)	# index of non-empty metacell
+		csize <- table(factor(mem, 1:H))	# size of cells that were assigned to each prototype
+		ncls <- sum(csize > 0)	# number of prototypes that have at least one assigned cells
+		centers <- which(csize > 0)	# index of non-empty prototype
 		CT <- mf$CT
-		Y <- mf$landscape$Y.prototype
 		Yp <- mf$landscape$Yp.prototype
+		Y <- mf$landscape$Y.prototype
 
 		n.prototype <- mf$landscape$n.prototype
 
@@ -429,59 +440,18 @@ jitter2 <- function(x, amount = 0.1){
 } # end of jitter2
 
 
-#' Pseudoinerse
-#'
-solve2 <- function(x){
-	s <- svd(x)
-	s$v %*% diag(1 / s$d) %*% t(s$u)
-}
-
-
-#' Initialize metacell landscape
-#'
-init.Theta.20171116b <- function(V, CT, TMC, n.circle, n.metacell, is.scaffold, S.conv, L0, max.iter = 100){
-
-	K <- nrow(V)
-	M <- ncol(V)	# numbero of cells
-	H.metacell <- ncol(TMC)	# total number of metacells
-	H <- n.circle * n.metacell	# number of metacells per layer
-	Theta <- matrix(rnorm(K * H.metacell), K, H.metacell, dimnames = list(NULL, colnames(TMC)))
-
-	for (t in ncol(CT):1){
-		h <- TMC[t, ]	# metacells at current time point t
-		if (t == ncol(CT)){
-			Wt <- matrix(TRUE, nrow = sum(CT[, t]), ncol = H)
-			Wt[, !is.scaffold] <- FALSE 
-			mf.gtm <- gtm(V[, CT[, t]], Theta = Theta[, h], L = L0, W = Wt, max.iter = max.iter, verbose = TRUE, beta = 1, batch.size = 20, update.beta = TRUE)
-			Theta[, h] <- mf.gtm$Theta
-		}else{
-			hp <- TMC[t + 1, ]		# metacells from the previous time point (t - 1)
-			Theta[, h] <- scale(Theta[, which(hp)[!is.scaffold]] %*% solve2(S.conv))
-		}
-	}
-	Theta
-} # end of init.Theta.20171116b
-
-
 #' Scale a continuous vector into color representation
 #'
 num2color <- function(x, cp = colorpanel(100, low = 'blue', mid = 'black', high = 'yellow')) cp[round((x - min(x)) / (max(x) - min(x)) * (length(cp) - 1)) + 1]
 
-#' learning rate
+
+#' learning rate for stochastic variational inference
+#'
+#' @param t current iteration step
+#' @param decay.rate down-weights for early iterations (default: 5)
+#' @param forgetting.rate controls how quickly old information is forgotten (default: 0.75)
 #'
 learning.rate <- function(t, decay.rate = 5, forgetting.rate = 0.75) ifelse(t == 0, 1, (t + decay.rate)^(-forgetting.rate))
-
-#' mini.batch
-mini.batch <- function(M, batch.size = 10){
-
-		starts <- seq(1, M, by = batch.size)
-		ends <- starts + batch.size - 1
-		if (ends[length(ends)] > M){
-			ends[length(ends)] <- M
-		}
-		lapply(1:length(starts), function(i) starts[i]:ends[i])
-
-} # end of mini.batch
 
 
 #' updating local variable E[V], E[exp(V)], a and E[Z]
@@ -507,46 +477,35 @@ update.localvar <- function(X, U, V = NULL, V.exp = NULL, Theta = NULL, beta = N
 	a <- log(colSums(SN)) - log(colSums(U %*% V.exp) + eps)	# updating the cell effect (a)
 	B <- matrix(a, nrow = K, ncol = M, byrow = TRUE) + log(t(U) %*% matrix(1, N, M) + eps) # sum of a[m] + log(U[n, k] * W[n, m]) from n=1 to n=N
 
-	if (!is.null(Theta)){	# with a metacell landscape
-		H <- ncol(Theta)	# number of prototypes
-		# construct a permutation matrix to compute \sum_{m=1}^M \sum_{h=1}^H ||\Theta_h - V_m||^2
-		perm <- expand.grid(1:M, (M + 1):(M + H))
-		P <- sparseMatrix(i = c(perm[, 1], perm[, 2]), j = rep(1:nrow(perm), 2), x = rep(c(1, -1), each = nrow(perm)), dims = c(M + H, nrow(perm)))
+	H <- ncol(Theta)	# number of prototypes
+	# construct a permutation matrix to compute \sum_{m=1}^M \sum_{h=1}^H ||\Theta_h - V_m||^2
+	perm <- expand.grid(1:M, (M + 1):(M + H))
+	P <- sparseMatrix(i = c(perm[, 1], perm[, 2]), j = rep(1:nrow(perm), 2), x = rep(c(1, -1), each = nrow(perm)), dims = c(M + H, nrow(perm)))
 
-		# updating E[Z], the allocation of cells on prototypes
-		Z <- as.matrix(-1/2  * beta * rdist(t(V), t(Theta))^2 - 1/2 * K * log(2 * pi) + 1/2 * K * log(beta) + C %*% Pi.log)
-		if (!is.null(W))
-			Z[!W] <- -Inf
-		Z <- t(softmax(t(Z)))# E[Z]
+	# updating E[Z], the allocation of cells on prototypes
+	Z <- as.matrix(-1/2  * beta * rdist(t(V), t(Theta))^2 - 1/2 * K * log(2 * pi) + 1/2 * K * log(beta) + C %*% Pi.log)
+	if (!is.null(W))
+		Z[!W] <- -Inf
+	Z <- t(softmax(t(Z)))# E[Z]
 
-		BETA.blk <- kronecker(Diagonal(n = M), matrix(-beta, nrow = K, ncol = K))	# helper matrix for computing hessian
-		iter <- 1
-		while (iter <= max.iter){	# Laplace approximation
-			PD.log <- V + B
-			# compute the gradient of cells to update
-			GR <- SN - exp(PD.log) - beta * matrix(Matrix::rowSums(matrix(Matrix::colSums(cbind(V, Theta) %*% P), nrow = M, ncol = H) * Z), nrow = K, ncol = M, byrow = TRUE) - V
-			# compute the inverse of covariance matrix using Sherman-Morrison formula
-			PD.inv <- 1 / (exp(PD.log) + 1)
-			w <- colSums(PD.inv)
-			PD.INV <- Diagonal(x = -c(PD.inv))
-			H.INV <- PD.INV - PD.INV %*% BETA.blk %*% PD.INV %*% kronecker(Diagonal(x = 1 / (1 + beta * w)), Diagonal(n = K))
-			# create a block diagonal matrix for the hession matrix and update V
-			V <- V - matrix(H.INV %*% c(GR), K, M)	# E[V]
-			V.var <- matrix(-diag(H.INV), K, M)	# diagonal of Var[v_m], for computing E[exp(V)]
-			iter <- iter + 1
-		}
-	}else{ # without metacell landscape
-		Z <- NULL
-		iter <- 1
-		while (iter <= max.iter){	# Laplace approximation
-			PD.log <- V + B
-			GR <- SN - exp(PD.log) - V	# the gradient of V
-			# compute the inverse using Sherman-Morrison formula
-			hess.inv <- 1 / (-exp(PD.log) - 1)
-			V <- V - hess.inv * GR	# E[V]
-			V.var <- -hess.inv
-			iter <- iter + 1
-		}
+	BETA.blk <- kronecker(Diagonal(n = M), matrix(-beta, nrow = K, ncol = K))	# helper matrix for computing hessian
+	iter <- 1
+	while (iter <= max.iter){	# Laplace approximation
+		V0 <- V
+		PD.log <- V + B
+		# compute the gradient of cells to update
+		GR <- SN - exp(PD.log) - beta * matrix(Matrix::rowSums(matrix(Matrix::colSums(cbind(V, Theta) %*% P), nrow = M, ncol = H) * Z), nrow = K, ncol = M, byrow = TRUE) - V
+		# compute the inverse of covariance matrix using Sherman-Morrison formula
+		PD.inv <- 1 / (exp(PD.log) + 1)
+		w <- colSums(PD.inv)
+		PD.INV <- Diagonal(x = -c(PD.inv))
+		H.INV <- PD.INV - PD.INV %*% BETA.blk %*% PD.INV %*% kronecker(Diagonal(x = 1 / (1 + beta * w)), Diagonal(n = K))
+		# create a block diagonal matrix for the hession matrix and update V
+		V <- V - matrix(H.INV %*% c(GR), K, M)	# E[V]
+		V.var <- matrix(-diag(H.INV), K, M)	# diagonal of Var[v_m], for computing E[exp(V)]
+		if (max.iter > 1 && norm(V - V0, '2') < 1e-7)
+			break
+		iter <- iter + 1
 	}
 	list(
 		a = a, 
@@ -558,11 +517,16 @@ update.localvar <- function(X, U, V = NULL, V.exp = NULL, Theta = NULL, beta = N
 
 
 #' describe the prototype landscape
-init.landscape <- function(type = 'tcm', ...){
+#' 
+#' @param type type of the prototype landscape
+#' @param n.circle prototypes per layer (S)
+#' @param n.prototype the number of layers (R)
+#' @param n.prev the number of layers of convolving prototypes (R - rho)
+init.landscape <- function(type = 'temporal.convolving', ...){
 
 	param <- list(...)
 	
-	if (type == 'tcm'){
+	if (type == 'temporal.convolving'){
 
 		time.points <- param[['time.points']]
 
@@ -632,12 +596,6 @@ init.landscape <- function(type = 'tcm', ...){
 		cat(sprintf('number of prototypes for each time point: %d\n', H))
 		cat(sprintf('number of circle(s) mapped from the previous time point: %d\n', n.prev))
 		cat(sprintf('number of total prototypes: %d\n', H.prototype))
-
-	}else if (type == 'cluster'){
-
-		n.prototype <- param[['n.prototype']]
-		n.circle <- param[['n.circle']]
-		lambda <- param[['lambda']]
 
 	}else
 		stop(sprintf('unknown landscape type: %s', type))
