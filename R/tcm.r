@@ -10,6 +10,7 @@ library(gplots)	# colorpanel
 library(plotrix)	# draw.circle
 library(SummarizedExperiment) 	
 library(parallel) # mclapply
+library(wordcloud)	# textplot
 
 
 #' Simulating time series single cell RNA-seq data
@@ -170,11 +171,12 @@ sim.rnaseq.ts <- function(N = 200, M = 50, K = 20, n.circle = 100, n.metacell = 
 #'
 #' @export
 #' 
-tcm <- function(X, time.table = NULL, landscape = NULL, nc = 3, init.V.method = 'mds', init.U.method = 'pam', optimization.method = 'stochastic', batch.size = 2000, max.iter = 100, mc.cores = 1){
+tcm <- function(X, time.table = NULL, landscape = NULL, init = NULL, control = NULL){
 
 	N <- nrow(X)
 	M <- ncol(X)
 	eps <- .Machine$double.eps
+	control <- set.control(control)
 
 	if (is.null(time.table) && landscape[['type']] == 'temporal.convolving')
 		stop('time.table cannot be NULL if landscape$type is temporal.convolving')
@@ -187,70 +189,35 @@ tcm <- function(X, time.table = NULL, landscape = NULL, nc = 3, init.V.method = 
 	CT <- as(as(time.table, 'matrix'), 'ngCMatrix') # cell ~ time
 	time <- colnames(time.table)
 
-	cat('-------------------------------------------------------------------------------------------------\n')
-	cat('topographic cell map\n')
-	cat('-------------------------------------------------------------------------------------------------\n')
 	cat(sprintf('[%s] number of input genes(N): %d\n', Sys.time(), N))
 	cat(sprintf('[%s] number of input cells(M): %d\n', Sys.time(), M))
-	cat(sprintf('[%s] optimization method: %s\n', Sys.time(), optimization.method))
-	cat(sprintf('[%s] method for initializing U: %s\n', Sys.time(), init.U.method))
-	cat(sprintf('[%s] method for initializing V: %s\n', Sys.time(), init.V.method))
-	if (optimization.method == 'stochastic'){
-		cat(sprintf('[%s] batch.size: %d\n', Sys.time(), batch.size))
+	cat(sprintf('[%s] number of time points(ncol(time.table)): %d\n', Sys.time(), ncol(CT)))
+	cat(sprintf('[%s] number of metagenes(K): %d\n', Sys.time(), K))
+	cat(sprintf('[%s] optimization method: %s\n', Sys.time(), control[['optimization.method']]))
+	if (control[['optimization.method']] == 'stochastic'){
+		cat(sprintf('[%s] batch.size: %d\n', Sys.time(), control[['batch.size']]))
 	}
-	cat(sprintf('[%s] number of cores: %d\n', Sys.time(), mc.cores))
+	cat(sprintf('[%s] number of cores: %d\n', Sys.time(), control[['mc.cores']]))
 
-#	gs <- max.col(time.table)
-#	pvalues <- unlist(mclapply(1:N, function(n) kruskal.test(split(X[n, ], list(gs)))$p.value, mc.cores = mc.cores))
-#	fdr <- p.adjust(pvalues, method = 'fdr')
-#	X <- X[fdr < 0.001, ]
-#	N <- nrow(X)
-#	cat(sprintf('[%s] number of temporally dynamically expressed genes (adjusted kruskal test p<0.05): %d\n', Sys.time(), N))
+	cat(sprintf('[%s] initializing metagene coefficients (max.size.dist.matrix=%d):\n', Sys.time(), control$max.size.dist.matrix))
+	V <- fastmds(scale(log(X + 1)), K = K, control = control)
 
-	cat(sprintf('[%s] initializing metagene coefficients and basis\n', Sys.time()))
-
-	if (init.V.method == 'irlba'){
-		V <- scale(t(irlba(scale(log(X + 1)), nu = 1, nv = K + 1)$v[, 2:(K + 1)]))
-	}else if (init.V.method == 'mds'){
-		X.log <- scale(log(X + 1))	# scaled and log transformed input
-		s <- irlba(X.log, nu = 1, nv = 1)
-		X.log <- scale(X.log - (s$u[, 1] %o% s$v[, 1]) * s$d)
-		D <- rdist(t(X.log))^2	# cell-wise distance matrix
-		V <- scale(t(cmdscale(as.dist(D), eig = TRUE, k = K)$points))
-	}
-	V <- matrix(c(V), nrow(V), ncol(V))
-
+	cat(sprintf('[%s] initializing metagene basis:\n', Sys.time()))
 	a <- rep(0, M)	# initialize the cell effect
-	if (init.U.method == 'random'){
-		U <- matrix(runif(N * K), N, K) 	# initialize the metagene basis
-	}else if (init.U.method == 'pam'){
-		CC <- sparseMatrix(i = 1:M, j = pam(t(V), K, cluster.only = TRUE), dims = c(M, K))	# # cells ~ clusters
-		U <- as.matrix(X %*% CC %*% diag(1 / Matrix::colSums(CC)))	# initialize E[U]
-	}
-
-	mf <- ccr(X, U = U, V = V, a = a, optimization.method = optimization.method, batch.size = batch.size, max.iter = max.iter, mc.cores = mc.cores)
-	mf <- ccm(X, U = mf$U, V = V, a = mf$a, optimization.method = optimization.method, batch.size = batch.size, max.iter = max.iter, mc.cores = mc.cores)
-	V <- mf$V	# the metagene coefficient
+	CC <- sparseMatrix(i = 1:M, j = pam(t(V), K, cluster.only = TRUE), dims = c(M, K))	# # cells ~ clusters
+	U <- as.matrix(X %*% CC %*% diag(1 / Matrix::colSums(CC)))	# initialize E[U]
+	mf <- ccm(X, U = U, V = V, a = a, control = control)
 	U <- mf$U	# the metagene basis
-	a <- mf$a
+	V <- mf$V	
+	a <- mf$a # the cell effect
 
-	cat(sprintf('[%s] initializing prototype landscape\n', Sys.time()))
-	if (landscape[['type']] == 'temporal.convolving'){	# initialization for landscape type = temporal.convolving
+	cat(sprintf('[%s] initializing prototype landscape (method=%s):\n', Sys.time(), init$method))
+	mf <- gtm(V = scale(V), landscape = landscape, CT = CT, method = init$method, control = control)
 
-		ls <- init.landscape(type = 'plate', K = K, n.prototype = n.prototype, n.circle = 5)
-		mf <- gtm(V = V, landscape = ls, optimization.method = optimization.method, min.beta = 1, batch.size = batch.size, max.iter = max.iter, mc.cores = mc.cores)
-		CC <- sparseMatrix(i = 1:M, j = max.col(mf$Z), dims = c(M, ls[['H.prototype']])) %*% ls[['MC']]	# cell ~ circle
-		CC <- CC[, Matrix::colSums(CC) > 0]	# circles with mapped cells
-
-		for (i in ncol(CC):1){	# from outer to inner region
-			i <- ncol(CC)
-			m <- which(Matrix::rowSums(CC[, i:ncol(CC), drop = FALSE]) > 0)	# cells mapped to current circle
-			mf <- gtm(V = V[, m], landscape = landscape, CT = CT[m, ], optimization.method = optimization.method, min.beta = 0, batch.size = batch.size, max.iter = max.iter, mc.cores = mc.cores)
-			landscape <- mf$landscape
-		}
-
-		mf <- tcm.core(X = X, U = U, V = V, a = a, landscape = landscape, CT = CT, optimization.method = optimization.method, batch.size = batch.size, max.iter = max.iter, mc.cores = mc.cores)
-	}
+	mem <- max.col(mf$Z)
+	mem[apply(mf$Z, 1, max) < mf$landscape$assignment.threshold] <- NA
+	mf <- tcm.core(X = X, U = U, V = V, a = a, landscape = mf$landscape, CT = CT, mem = mem, control = control)
+	dev.new(height = 10, width = 10); par(mar = c(2, 2, 2, 2)); plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 
 	mf
 
@@ -275,12 +242,10 @@ softmax <- function(x){
 #' @param mc.cores number of CPU cores (default: 1)
 #' @param max.size.per.batch maximum samples per batch
 #'
-tcm.core <- function(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NULL, optimization.method = 'batch', min.beta = 0, c0 = 0.001, d0 = 0.001, max.iter = 100, verbose = TRUE, batch.size = 100, decay.rate = 1, forgetting.rate = 0.75, mc.cores = 1, max.size.per.batch = 1000){
+tcm.core <- function(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NULL, mem = NULL, c0 = 0.001, d0 = 0.001, control = NULL){
 
 	eps <- .Machine$double.eps
-
-	# the number of iterations for Newton step for optimizing V and V.var
-	max.iter2 <- switch(optimization.method, 'batch' = 50, 'stochastic' = 1)
+	control <- set.control(control)
 
 	N <- nrow(X)	# number of genes
 	M <- ncol(X)	# number of cells
@@ -288,7 +253,7 @@ tcm.core <- function(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NUL
 	H <- landscape[['H.prototype']]	# number of prototypes
 
 	if (!is.null(landscape)){
-		Theta <- landscape[['Theta.free']] %*% landscape[['S']]	# all prototypes
+		Theta <- as.matrix(landscape[['Theta.free']] %*% landscape[['S']])	# all prototypes
 		if (!is.null(CT))
 			W <- CT %*% landscape[['TMC']]	# a binary cell ~ prototype assignment matrix
 		else
@@ -296,35 +261,36 @@ tcm.core <- function(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NUL
 	}else
 		stop('landscape must be specified')
 
+	# pre-assigned cells can be only mapped to dedicated prototypes
+	if (!is.null(mem) && any(!is.na(mem))){
+		i <- !is.na(mem)
+		W[i, ] <- FALSE
+		W[cbind(which(i), mem[i])] <- TRUE
+	}
+
 	if (is.null(a))
 		a <- rep(0, M)	# the cell effect
 
 	# splitting the samples into batches
-	if (M <= mc.cores * max.size.per.batch){	
-		n.batch <- mc.cores
-	}else{
-		n.batch <- ceiling(M / max.size.per.batch)
-	}
-	groups <- sample(1:n.batch, M, replace = TRUE)
-	size <- table(factor(groups, 1:n.batch))	# number of samples per core
+	s <- split.data(M, control = control)
 
 	# initialize the local variables
-	localvar <- mclapply(1:n.batch, function(b){
-		m <- groups == b
-		V.var <- matrix(1, nrow = K, ncol = size[b])	# Var[V]
+	localvar <- mclapply(1:s[['n.batch']], function(b){
+		m <- s[['groups']] == b
+		V.var <- matrix(1, nrow = K, ncol = s[['size']][b])	# Var[V]
 		V.exp <- exp(V[, m] + 1/2 * V.var)	# E[exp(V)]
-		list(a = a[m], V = V[, m], V.exp = V.exp, Z = matrix(1 / H, size[b], H))
-	}, mc.cores = mc.cores)
+		list(a = a[m], V = V[, m], V.exp = V.exp, Z = matrix(1 / H, s[['size']][b], H))
+	}, mc.cores = control[['mc.cores']])
 
 	iter <- 1
 	optval <- NULL
-	while (iter <= max.iter){
+	while (iter <= control[['max.iter']]){
 
 		Theta.free.p <- landscape[['Theta.free']]
 
 		# updating all local variables: E[V], E[exp(V)], a and E[Z]
-		localvar <- mclapply(1:n.batch, function(b){
-			m <- groups == b
+		localvar <- mclapply(1:s[['n.batch']], function(b){
+			m <- s[['groups']] == b
 			update.localvar(
 				X = X[, m, drop = FALSE],
 				U = U,
@@ -332,55 +298,42 @@ tcm.core <- function(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NUL
 				V.exp = localvar[[b]]$V.exp,
 				W = W[m, ],
 				landscape = landscape,
-				model = 'tcm', max.iter = max.iter2
+				model = 'tcm', control = control  
 			)
-		}, mc.cores = mc.cores)
+		}, mc.cores = control[['mc.cores']])
 
-		rho <- switch(optimization.method,
-			'stochastic' = learning.rate(iter, decay.rate, forgetting.rate),
-			'batch' = 1
-		)
-
-		if (optimization.method == 'stochastic'){
-			# SVI: sampling a subset of samples(cells) for updating global variables
-			m <- lapply(1:n.batch, function(b) sample(1:size[b], min(max(1, round(batch.size / n.batch)), size[b])))
-		}else{
-			# batch optimization: use all the samples
-			m <- lapply(1:n.batch, function(b) 1:size[b])
-		}
+		rho <- learning.rate(iter, control)
+		m <- sample.data(s, control)
 
 		# updating free prototypes Theta
-		SZS <- landscape[['S']] %*% Diagonal(x = landscape[['beta']] * Reduce('+', mclapply(1:n.batch, function(b) colSums(localvar[[b]]$Z[m[[b]], , drop = FALSE]), mc.cores = mc.cores))) %*% t(landscape[['S']])
+		SZS <- landscape[['S']] %*% Diagonal(x = landscape[['beta']] * Reduce('+', mclapply(1:s[['n.batch']], function(b) colSums(localvar[[b]]$Z[m[[b]], , drop = FALSE]), mc.cores = control[['mc.cores']]))) %*% t(landscape[['S']])
 		SZSL.inv <- chol2inv(chol(as.matrix(SZS + landscape[['L']])))
-		landscape[['Theta.free']] <- (1 - rho) * landscape[['Theta.free']] + rho * landscape[['beta']] * Reduce('+', mclapply(1:n.batch, function(b){
+		landscape[['Theta.free']] <- (1 - rho) * landscape[['Theta.free']] + rho * landscape[['beta']] * Reduce('+', mclapply(1:s[['n.batch']], function(b){
 			localvar[[b]]$V[, m[[b]], drop = FALSE] %*% localvar[[b]]$Z[m[[b]], , drop = FALSE] %*% t(landscape[['S']]) %*% SZSL.inv
-		}, mc.cores = mc.cores))
+		}, mc.cores = control[['mc.cores']]))
 
-#		U <- (1 - rho) * U + rho * Reduce('+', mclapply(1:n.batch, function(b){
-#			c <- U * (X[, which(groups == b)[m[[b]]]] / (U %*% localvar[[b]]$V.exp[, m[[b]], drop = FALSE] + eps)) %*% t(localvar[[b]]$V.exp[, m[[b]], drop = FALSE]) + c0
-#			d <- matrix(1, N, length(m[[b]])) %*% t(localvar[[b]]$V.exp[, m[[b]], drop = FALSE] %*% diag(exp(localvar[[b]]$a[m[[b]]]))) + d0
-#			U.log <- digamma(c) - log(d + eps)	# E[log(U)]
-#			exp(U.log)
-#		}, mc.cores = mc.cores)) / n.batch
+		U <- (1 - rho) * U + rho * Reduce('+', mclapply(1:s[['n.batch']], function(b){
+			c <- U * (X[, which(s[['groups']] == b)[m[[b]]]] / (U %*% localvar[[b]]$V.exp[, m[[b]], drop = FALSE] + eps)) %*% t(localvar[[b]]$V.exp[, m[[b]], drop = FALSE]) + c0
+			d <- matrix(1, N, length(m[[b]])) %*% t(localvar[[b]]$V.exp[, m[[b]], drop = FALSE] %*% diag(exp(localvar[[b]]$a[m[[b]]]))) + d0
+			U.log <- digamma(c) - log(d + eps)	# E[log(U)]
+			exp(U.log)
+		}, mc.cores = control[['mc.cores']])) / s[['n.batch']]
 
-		# updating beta
-		landscape[['beta']] <- (1 - rho) * landscape[['beta']] + rho * Reduce('+', mclapply(1:n.batch, function(b){
+		landscape[['beta']] <- (1 - rho) * landscape[['beta']] + rho * Reduce('+', mclapply(1:s[['n.batch']], function(b){
 			(K * sum(localvar[[b]]$Z[m[[b]], , drop = FALSE]) + 0.001) / (sum(localvar[[b]]$Z[m[[b]], , drop = FALSE] * rdist(t(localvar[[b]]$V[, m[[b]], drop = FALSE]), t(Theta))^2) + 0.001)
-			}, mc.cores = mc.cores)) / n.batch
-		landscape[['beta']] <- max(landscape[['beta']], min.beta)
+		}, mc.cores = control[['mc.cores']])) / s[['n.batch']]
 
 		# updating kappa/pi.log
-		kappa <- Reduce('+', mclapply(1:n.batch, function(b){
+		kappa <- Reduce('+', mclapply(1:s[['n.batch']], function(b){
 			colSums(localvar[[b]]$Z[m[[b]], , drop = FALSE]) + landscape[['alpha0']]
-		}, mc.cores = mc.cores)) 
+		}, mc.cores = control[['mc.cores']])) 
 		landscape[['pi.log']] <- (1 - rho) * landscape[['pi.log']] + rho * (digamma(kappa) - digamma(sum(kappa))) # E[log(pi)]
-		
 
 		if (iter == 1 || iter %% 10 == 0){
 			J <- norm(landscape[['Theta.free']] - Theta.free.p, '2')
-			n.cluster <- length(unique(unlist(mclapply(1:n.batch, function(b) max.col(localvar[[b]]$Z), mc.cores = mc.cores))))
-			cat(sprintf('[%s] tcm | iter=%5.d | M=%5.d | n.batch=%3.d | dJ=%7.3e | # non-empty prototypes=%4.d | beta=%7.3f\n', Sys.time(), iter, M, n.batch, J, n.cluster, landscape[['beta']]))
-			optval <- rbind(optval, data.frame(iter = iter, time = Sys.time(), n.cluster = n.cluster, beta = landscape[['beta']], J = J))
+			n.cluster <- length(unique(unlist(mclapply(1:s[['n.batch']], function(b) max.col(localvar[[b]]$Z), mc.cores = control[['mc.cores']]))))
+			cat(sprintf('[%s] tcm | iter=%5.d | M=%5.d | n.batch=%3.d | dJ=%7.3e | # non-empty prototypes=%4.d | beta=%7.3f\n', Sys.time(), iter, M, s[['n.batch']], J, n.cluster, landscape[['beta']]))
+			optval <- rbind(optval, data.frame(iter = iter, time = Sys.time(), n.cluster = n.cluster, J = J))
 			if (J < 0.01)
 				break
 		}
@@ -391,11 +344,17 @@ tcm.core <- function(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NUL
 	a <- rep(0, M)
 	V <- matrix(0, K, M)
 	Z <- matrix(0, M, H)
-	for (b in 1:mc.cores){
-		V[, groups == b] <- localvar[[b]]$V
-		Z[groups == b, ] <- localvar[[b]]$Z
-		a[groups == b] <- localvar[[b]]$a
+	for (b in 1:s[['n.batch']]){
+		V[, s[['groups']] == b] <- localvar[[b]]$V
+		Z[s[['groups']] == b, ] <- localvar[[b]]$Z
+		a[s[['groups']] == b] <- localvar[[b]]$a
 	}
+
+	cat(sprintf('[%s] tcm | updating active prototypes\n', Sys.time()))
+	landscape$is.active <- 1:landscape$H.prototype %in% max.col(Z)
+
+	cat(sprintf('[%s] tcm | updating landscape graph\n', Sys.time()))
+	landscape$graph <- as.igraph(landscape)
 
 	structure(list(H = H, N = N, M = M, K = K, U = U, V = V, a = a, Z = Z, CT = CT, landscape = landscape, optval = optval), class = 'tcm')
 
@@ -414,44 +373,54 @@ plot.tcm <- function(x, ...){
 
 	param <- list(...)
 
-	mf <- x
+	if (x$landscape$type %in% c('temporal.convolving', 'plate')){
 
-	if (mf$landscape$type %in% c('temporal.convolving', 'plate')){
-
-		H <- mf$landscape$H	# number of prototypes
-		K <- mf$landscape$K	# number of metagenes
-		M <- ncol(mf$V)	# number of cells
-		mem <- max.col(mf$Z)	# cluster membership
-		coord <- mf$landscape$Y.prototype
-		csize <- table(factor(mem, 1:H))	# size of cells that were assigned to each prototype
+		H.prototype <- x$landscape$H.prototype	# number of prototypes
+		M <- ncol(x$V)	# number of cells
+		mem <- max.col(x$Z)	# cluster membership
+		coord <- x$landscape$Y.prototype
+		csize <- table(factor(mem, 1:H.prototype))	# size of cells that were assigned to each prototype
 		ncls <- sum(csize > 0)	# number of prototypes that have at least one assigned cells
 		centers <- which(csize > 0)	# index of non-empty prototype
-		CT <- mf$CT
-		Yp <- mf$landscape$Yp.prototype
-		Y <- mf$landscape$Y.prototype
-
-		n.prototype <- mf$landscape$n.prototype
+		CT <- x$CT
+		Yp <- x$landscape$Yp.prototype
+		Y <- x$landscape$Y.prototype
+		n.prototype <- x$landscape$n.prototype
 
 		lim <- c(-max(Yp[, 'r']), max(Yp[, 'r']))	# limit of the 2D space
-		plot(NA, xlim = lim * 1.3, ylim = lim * 1.3, xlab = '', ylab = '', xaxt = 'n', yaxt = 'n', main = param[['main']])
+		plot(NA, xlim = lim * 1.1, ylim = lim * 1.1, xlab = '', ylab = '', xaxt = 'n', yaxt = 'n', asp = 1, main = param[['main']])
 
 		rs <- unique(Yp[, 'r'])
 		col.time <- colorpanel(length(rs), low = 'gray100', mid = 'gray70', high = 'gray40')
 		for (i in length(rs):1){
 			draw.circle(0, 0, rs[i], nv = 100, border = NA, col = col.time[i])
 		}
-
-		if (mf[['landscape']][['type']] == 'temporal.convolving'){
-			for (t in 1:ncol(mf[['CT']]))
+		
+		if (x[['landscape']][['type']] == 'temporal.convolving'){
+			for (t in 1:ncol(x[['CT']]))
 				draw.circle(0, 0, t, nv = 100, border = 'black', lty = 2, lwd = 2)
 		}
 
-		Y.cell2 <- t(jitter2(t(coord[, max.col(mf$Z)]), amount = 0.125 * max(lim)))	# jittered coordinate of cells
+		Y.cell2 <- t(jitter2(t(coord[, max.col(x$Z)]), amount = 0.125 * max(lim)))	# jittered coordinate of cells
 		points(Y.cell2[1, ], Y.cell2[2, ], ...)
+
+#		paths <- steiner.minimal.tree(as.igraph(x$landscape), centers)
+#		edge.list <- get.edgelist(paths)
+#		segments(Y[1, edge.list[, 1]], Y[2, edge.list[, 1]], Y[1, edge.list[, 2]], Y[2, edge.list[, 2]])
 
 	}
 
 } # end of plot.tcm
+
+
+#' Add the labels of active prototypes
+#' 
+centers <- function(mf, ...){
+	coord <- mf$landscape$Y.prototype
+	c <- which(mf$landscape$is.active)
+#	textplot(coord[1, c], coord[2, c], c, new = FALSE, ...)
+	text(coord[1, c], coord[2, c], c, ...)
+} # end of centers
 
 
 #' Adding an Enclidean noise, x must be in a two dimensional matrix
@@ -476,16 +445,27 @@ num2color <- function(x, cp = colorpanel(100, low = 'blue', mid = 'black', high 
 #' @param decay.rate down-weights for early iterations (default: 5)
 #' @param forgetting.rate controls how quickly old information is forgotten (default: 0.75)
 #'
-learning.rate <- function(t, decay.rate = 5, forgetting.rate = 0.75) ifelse(t == 0, 1, (t + decay.rate)^(-forgetting.rate))
+learning.rate <- function(t, control){
+	rho <- switch(control[['optimization.method']],
+		'stochastic' = learning.rate.stochastic(t, control[['decay.rate']], control[['forgetting.rate']]),
+		'batch' = 1
+	)
+	rho
+}
+
+learning.rate.stochastic <- function(t, decay.rate, forgetting.rate) ifelse(t == 0, 1, (t + decay.rate)^(-forgetting.rate))
 
 
 #' updating local variable E[V], E[exp(V)], a and E[Z]
 #' @param X a N by M expression matrix
 #' @param U a N by K metagene basis matrix
 #' @param V the initial values of a K by M metagene coefficient matrix
-update.localvar <- function(X, U, V = NULL, V.exp = NULL, W = NULL, landscape = NULL, model = NA, max.iter = 1){
+update.localvar <- function(X, U, V = NULL, V.exp = NULL, W = NULL, landscape = NULL, model = NA, control = NULL, ...){
 
 	eps <- .Machine$double.eps
+	param <- list(...)
+
+	max.iter <- switch(control[['optimization.method']], 'batch' = 50, 'stochastic' = 1)
 
 	if (!is.null(W))
 		W <- as.matrix(W)
@@ -505,7 +485,7 @@ update.localvar <- function(X, U, V = NULL, V.exp = NULL, W = NULL, landscape = 
 
 		if (model == 'tcm'){
 			B <- matrix(a, nrow = K, ncol = M, byrow = TRUE) + log(t(U) %*% matrix(1, N, M) + eps) # sum of a[m] + log(U[n, k] * W[n, m]) from n=1 to n=N
-			Theta <- landscape[['Theta.free']] %*% landscape[['S']]	# all prototypes
+			Theta <- as.matrix(landscape[['Theta.free']] %*% landscape[['S']])	# all prototypes
 			H <- landscape[['H.prototype']]	# number of prototypes
 			# construct a permutation matrix to compute \sum_{m=1}^M \sum_{h=1}^H ||\Theta_h - V_m||^2
 			perm <- expand.grid(1:M, (M + 1):(M + H))
@@ -572,7 +552,8 @@ update.localvar <- function(X, U, V = NULL, V.exp = NULL, W = NULL, landscape = 
 		M <- ncol(V)	#	number of cells
 		K <- nrow(V)
 		# updating E[Z], the allocation of cells on prototypes
-		Z <- as.matrix(-1/2  * landscape[['beta']] * rdist(t(V), t(landscape[['Theta.free']] %*% landscape[['S']]))^2 - 1/2 * K * log(2 * pi) + 1/2 * K * log(landscape[['beta']]) + matrix(landscape[['pi.log']], M, H, byrow = TRUE))
+		Theta <- landscape$Theta.free %*% landscape$S
+		Z <- as.matrix(-1/2  * landscape$beta * rdist(t(V), t(Theta))^2 - 1/2 * K * log(2 * pi) + 1/2 * K * log(landscape$beta) + matrix(landscape$pi.log, M, H, byrow = TRUE))
 		if (!is.null(W))
 			Z[!W] <- -Inf
 		Z <- t(softmax(t(Z)))# E[Z]
@@ -587,14 +568,14 @@ update.localvar <- function(X, U, V = NULL, V.exp = NULL, W = NULL, landscape = 
 #' @param n.circle prototypes per layer (S)
 #' @param n.prototype the number of layers (R)
 #' @param n.prev the number of layers of convolving prototypes (R - rho)
-init.landscape <- function(type = 'temporal.convolving', K = 10, ...){
+landscape <- function(type = 'temporal.convolving', K = 10, ...){
 
 	param <- list(...)
 
-	if (is.null(param[['alpha0']]))
-		alpha0 <- 0.001
+	if (is.null(param[['alpha00']]))
+		alpha00 <- 0.001
 	else
-		alpha0 <- param[['alpha0']]
+		alpha00 <- param[['alpha00']]
 
 	if (type == 'temporal.convolving'){
 
@@ -614,6 +595,7 @@ init.landscape <- function(type = 'temporal.convolving', K = 10, ...){
 
 		H <- n.circle * n.prototype # number of prototypes per time point
 		H.prototype <- H * time.points	# total number of prototypes
+		alpha0 <- rep(alpha00, H.prototype)
 
 		# 2D coordinate of a generic prototype landscape
 		Y0p <- as.matrix(expand.grid(angle = seq(0, 2 * pi, length.out = n.prototype + 1)[-1], r = seq(0, 1, length.out = n.circle + 1)[-1]))	# polar coord
@@ -656,7 +638,8 @@ init.landscape <- function(type = 'temporal.convolving', K = 10, ...){
 		Y.prototype <- rbind(x = Yp.prototype[, 'r'] * cos(Yp.prototype[, 'angle']), y = Yp.prototype[, 'r'] * sin(Yp.prototype[, 'angle']))
 		
 		Theta.free <- matrix(rnorm(K * H.free), K, H.free)
-		pi.log <- rep(digamma(alpha0) - digamma(alpha0 * H.prototype), H.prototype)	# E[log(pi)]
+		alpha0 <- rep(alpha00, H.prototype)
+		pi.log <- digamma(alpha0) - digamma(sum(alpha0))	# E[log(pi)]
 
 	}else if (type == 'plate'){
 
@@ -678,14 +661,16 @@ init.landscape <- function(type = 'temporal.convolving', K = 10, ...){
 		is.free <- rep(TRUE, H.prototype)
 		n.prev <- NULL; TMC <- NULL
 		MC <- sparseMatrix(i = 1:H.prototype, j = rep(1:n.circle, each = n.prototype), dims = c(H.prototype, n.circle))	# prototype ~ circle
-
 		Theta.free <- matrix(rnorm(K * H.free), K, H.free)
-		pi.log <- rep(digamma(alpha0) - digamma(alpha0 * H.prototype), H.prototype)	# E[log(pi)]
+		alpha0 <- rep(alpha00, H.prototype)
+		pi.log <- digamma(alpha0) - digamma(sum(alpha0))	# E[log(pi)]
+
+	}else if (type == 'convolving.plate'){
 
 	}else
 		stop(sprintf('unknown landscape type: %s', type))
 
-	structure(list(
+	landscape <- structure(list(
 		type = type,
 		K = K,
 		H = H, 
@@ -702,89 +687,111 @@ init.landscape <- function(type = 'temporal.convolving', K = 10, ...){
 		Theta.free = Theta.free, 
 		Y.prototype = Y.prototype,
 		Yp.prototype = Yp.prototype,
+		alpha00 = alpha00,
 		alpha0 = alpha0,
 		is.free = is.free,
 		pi.log = pi.log,
-		beta = 1
+		beta = 1,
+		is.active = rep(TRUE, H.prototype),
+		is.mappable = rep(TRUE, H.prototype),
+		assignment.threshold = 0.95
 	), class = 'landscape')
+
+	landscape$graph <- as.igraph(landscape)
+	landscape
 
 } # end of init.landscape 
 
 
+#' Get an igraph object of neighboring graph of the prototype landscape where each vertex represent a prototype
+#' and the distance between neighboring vertex is the Euclidean distance of their metagene coefficients
+#'
+#' @param x a tcm object
+#'
+as.igraph.landscape <- function(x, ...){
+
+	if (x$type %in% c('temporal.convolving', 'plate')){
+		Yp <- transform(x$Yp.prototype, angle = factor(angle / (2 * pi)), r = factor(r))
+		rs <- levels(Yp[, 2])
+		angles <- levels(Yp[, 1])
+		a <- rbind( 
+			do.call('rbind', lapply(rs, function(r){
+				v <- which(Yp[, 2] == r)
+				data.frame(from = v[1:length(v)], to = v[c(2:length(v), 1)])
+			})),
+			do.call('rbind', lapply(angles, function(angle){
+				v <- which(Yp[, 1] == angle)
+				data.frame(from = v[1:(length(v) - 1)], to = v[2:length(v)])
+			}))
+		)
+		
+		Theta <- as.matrix(x[['Theta.free']] %*% x[['S']])	# all prototypes
+		w <- sqrt(Matrix::colSums((Theta[, a[, 1]] - Theta[, a[, 2]])^2))	# distance between neighboring prototypes
+		a <- cbind(a, weight = w)
+		A <- sparseMatrix(i = a[, 'from'], j = a[, 'to'], x = a[, 'weight'], dims = c(x$H.prototype, x$H.prototype))
+		A <- A + t(A)
+		A <- graph.adjacency(A, weighted = TRUE, mode = 'undirected')
+	}
+	A
+} # end of as.igraph.landscape
+
+
 #' Correlated Cell Model
 #'
-ccm <- function(X, U = NULL, V = NULL, a = NULL, optimization.method = 'batch', c0 = 0.001, d0 = 0.001, max.iter = 100, verbose = TRUE, batch.size = 100, decay.rate = 1, forgetting.rate = 0.75, mc.cores = 1, max.size.per.batch = 1000){
+ccm <- function(X, U = NULL, V = NULL, a = NULL, c0 = 0.001, d0 = 0.001, control = NULL){
 
 	eps <- .Machine$double.eps
-
-	# the number of iterations for Newton step for optimizing V and V.var
-	max.iter2 <- switch(optimization.method, 'batch' = 50, 'stochastic' = 1)
+	control <- set.control(control)
 
 	N <- nrow(X)	# number of genes
 	M <- ncol(X)	# number of cells
 	K <- nrow(V)	# number of metagenes
 
 	# splitting the samples into batches
-	if (M <= mc.cores * max.size.per.batch){	
-		n.batch <- mc.cores
-	}else{
-		n.batch <- ceiling(M / max.size.per.batch)
-	}
-	groups <- sample(1:n.batch, M, replace = TRUE)
-	size <- table(factor(groups, 1:n.batch))	# number of samples per core
+	s <- split.data(M, control = control)
 
 	# initialize the local variables
-	localvar <- mclapply(1:n.batch, function(b){
-		m <- groups == b
-		V.var <- matrix(1, nrow = K, ncol = size[b])	# Var[V]
+	localvar <- mclapply(1:s[['n.batch']], function(b){
+		m <- s[['groups']] == b
+		V.var <- matrix(1, nrow = K, ncol = s[['size']][b])	# Var[V]
 		V.exp <- exp(V[, m] + 1/2 * V.var)	# E[exp(V)]
 		list(a = a[m], V = V[, m], V.exp = V.exp)
-	}, mc.cores = mc.cores)
+	}, mc.cores = control[['mc.cores']])
 
 	iter <- 1
 	optval <- NULL
-	while (iter <= max.iter){
+	while (iter <= control[['ccm.max.iter']]){
 
 		Up <- U
 
 		# updating all local variables: E[V], E[exp(V)] and a
-		localvar <- mclapply(1:n.batch, function(b){
-			m <- groups == b
+		localvar <- mclapply(1:s[['n.batch']], function(b){
+			m <- s[['groups']] == b
 			update.localvar(
 				X = X[, m, drop = FALSE],
 				U = U,
 				V = localvar[[b]]$V, 
 				V.exp = localvar[[b]]$V.exp,
-				model = 'ccm', max.iter = max.iter2
+				model = 'ccm', control = control
 			)
-		}, mc.cores = mc.cores)
+		}, mc.cores = control[['mc.cores']])
 
-		rho <- switch(optimization.method,
-			'stochastic' = learning.rate(iter, decay.rate, forgetting.rate),
-			'batch' = 1
-		)
+		rho <- learning.rate(iter, control)
+		m <- sample.data(s, control)
 
-		if (optimization.method == 'stochastic'){
-			# SVI: sampling a subset of samples(cells) for updating global variables
-			m <- lapply(1:n.batch, function(b) sample(1:size[b], min(max(1, round(batch.size / n.batch)), size[b])))
-		}else{
-			# batch optimization: use all the samples
-			m <- lapply(1:n.batch, function(b) 1:size[b])
-		}
-
-		U <- (1 - rho) * U + rho * Reduce('+', mclapply(1:n.batch, function(b){
-			c <- U * (X[, which(groups == b)[m[[b]]]] / (U %*% localvar[[b]]$V.exp[, m[[b]], drop = FALSE] + eps)) %*% t(localvar[[b]]$V.exp[, m[[b]], drop = FALSE]) + c0
+		U <- (1 - rho) * U + rho * Reduce('+', mclapply(1:s[['n.batch']], function(b){
+			c <- U * (X[, which(s[['groups']] == b)[m[[b]]]] / (U %*% localvar[[b]]$V.exp[, m[[b]], drop = FALSE] + eps)) %*% t(localvar[[b]]$V.exp[, m[[b]], drop = FALSE]) + c0
 			d <- matrix(1, N, length(m[[b]])) %*% t(localvar[[b]]$V.exp[, m[[b]], drop = FALSE] %*% diag(exp(localvar[[b]]$a[m[[b]]]))) + d0
 			U.log <- digamma(c) - log(d + eps)	# E[log(U)]
 			exp(U.log)
-		}, mc.cores = mc.cores)) / n.batch
+		}, mc.cores = control[['mc.cores']])) / s[['n.batch']]
 
 		if (iter == 1 || iter %% 10 == 0){
-			J <- norm(U - Up, '2')
-			cat(sprintf('[%s] ccm | iter=%5.d | M=%5.d | n.batch=%3.d | dJ=%7.3e\n', Sys.time(), iter, M, n.batch, J))
-			optval <- rbind(optval, data.frame(iter = iter, time = Sys.time(), J = J))
-			if (J < 0.01)
-				break
+
+			J.X <- sum(unlist(mclapply(1:s[['n.batch']], function(b) sum(ldpois(X[, which(s[['groups']] == b)], U %*% localvar[[b]]$V.exp %*% diag(exp(localvar[[b]]$a)))), mc.cores = control[['mc.cores']])))
+			J.V <- -sum(unlist(mclapply(1:s[['n.batch']], function(b) norm(localvar[[b]]$V, '2')^2, mc.cores = control$mc.cores))) / (K * M)
+			cat(sprintf('[%s] ccm | iter=%5.d | M=%5.d | n.batch=%3.d | J(X)=%7.3e | J(V)=%7.3e | J=%7.3e\n', Sys.time(), iter, M, s[['n.batch']], J.X, J.V, J.X + J.V))
+			optval <- rbind(optval, data.frame(iter = iter, time = Sys.time(), J.X = J.X, J.V = J.V, J = J.X + J.V))
 		}
 		iter <- iter + 1
 	}
@@ -792,9 +799,9 @@ ccm <- function(X, U = NULL, V = NULL, a = NULL, optimization.method = 'batch', 
 	# aggregating the results from different batches
 	a <- rep(0, M)
 	V <- matrix(0, K, M)
-	for (b in 1:mc.cores){
-		V[, groups == b] <- localvar[[b]]$V
-		a[groups == b] <- localvar[[b]]$a
+	for (b in 1:s[['n.batch']]){
+		V[, s[['groups']] == b] <- localvar[[b]]$V
+		a[s[['groups']] == b] <- localvar[[b]]$a
 	}
 	list(N = N, M = M, K = K, U = U, V = V, a = a, optval = optval)
 
@@ -803,90 +810,81 @@ ccm <- function(X, U = NULL, V = NULL, a = NULL, optimization.method = 'batch', 
 
 #' The generative topographic model
 #'
-gtm <- function(V, landscape = NULL, CT = NULL, optimization.method = 'batch', min.beta = 0, max.iter = 100, verbose = TRUE, batch.size = 100, decay.rate = 1, forgetting.rate = 0.75, mc.cores = 1, max.size.per.batch = 1000){
+#' @param V a K by M metagene coefficient of cells, where K is the number of metagenes and M is the number of cells
+gtm.core <- function(V, landscape = NULL, CT = NULL, mem = NULL, control = NULL){
 
 	eps <- .Machine$double.eps
 	M <- ncol(V)	# number of cells
 	K <- nrow(V)	# number of metagenes
+	control <- set.control(control)
 
-	# the number of iterations for Newton step for optimizing V and V.var
-	max.iter2 <- switch(optimization.method, 'batch' = 50, 'stochastic' = 1)
-	
 	if (!is.null(landscape)){
-		Theta <- landscape[['Theta.free']] %*% landscape[['S']]	# all prototypes
+		Theta <- as.matrix(landscape$Theta.free %*% landscape$S)	# all prototypes
 		if (landscape[['type']] == 'temporal.convolving'){
-			W <- CT %*% landscape[['TMC']]	# a binary cell ~ prototype assignment matrix
+			if (is.null(CT))
+				stop('CT cannot be NULL if landscape type is temporal.convolving')
+			W <- CT %*% landscape$TMC	# a binary cell ~ prototype assignment matrix
 		}else if (landscape[['type']] %in% c('som', 'plate')){
-			W <- matrix(TRUE, M, landscape[['H.prototype']])
+			W <- as(matrix(TRUE, M, landscape$H.prototype), 'ngCMatrix')
 		}
 	}else
 		stop('landscape must be specified')
 
-
-	# splitting the samples into batches
-	if (M <= mc.cores * max.size.per.batch){	
-		n.batch <- mc.cores
-	}else{
-		n.batch <- ceiling(M / max.size.per.batch)
+	# turn off the non-mappable prototypes
+	if (any(!landscape$is.mappable))
+		W[, !landscape$is.mappable] <- FALSE
+	
+	# pre-assigned cells can be only mapped to dedicated prototypes
+	if (!is.null(mem) && any(!is.na(mem))){
+		i <- !is.na(mem)
+		W[i, ] <- FALSE
+		W[cbind(which(i), mem[i])] <- TRUE
 	}
-	groups <- sample(1:n.batch, M, replace = TRUE)
-	size <- table(factor(groups, 1:n.batch))	# number of samples per core
-	landscape[['pi.log']] <- rep(digamma(landscape[['alpha0']]) - digamma(landscape[['alpha0']]* landscape[['H.prototype']]), landscape[['H.prototype']])
+	
+	# splitting the samples into batches
+	s <- split.data(M, control = control)
 
 	iter <- 1
 	optval <- NULL
-	while (iter <= max.iter){
+	while (iter <= control[['max.iter']]){
 
 		Theta.free.p <- landscape[['Theta.free']]
 
 		# updating all local variables: E[Z]
-		localvar <- mclapply(1:n.batch, function(b){
-			m <- groups == b
+		localvar <- mclapply(1:s[['n.batch']], function(b){
+			m <- s[['groups']] == b
 			update.localvar(
 				V = V[, m, drop = FALSE],
 				W = W[m, , drop = FALSE],
 				landscape = landscape,
-				model = 'gtm'
+				model = 'gtm', control = control
 			)
-		}, mc.cores = mc.cores)
+		}, mc.cores = control[['mc.cores']])
 
-		rho <- switch(optimization.method,
-			'stochastic' = learning.rate(iter, decay.rate, forgetting.rate),
-			'batch' = 1
-		)
-
-		if (optimization.method == 'stochastic'){
-			# SVI: sampling a subset of samples(cells) for updating global variables
-			m <- lapply(1:n.batch, function(b) sample(1:size[b], min(max(1, round(batch.size / n.batch)), size[b])))
-		}else{
-			# batch optimization: use all the samples
-			m <- lapply(1:n.batch, function(b) 1:size[b])
-		}
+		rho <- learning.rate(iter, control)
+		m <- sample.data(s, control)
 
 		# updating free prototypes Theta
-		SZS <- landscape[['S']] %*% Diagonal(x = landscape[['beta']] * Reduce('+', mclapply(1:n.batch, function(b) colSums(localvar[[b]]$Z[m[[b]], , drop = FALSE]), mc.cores = mc.cores))) %*% t(landscape[['S']])
-		SZSL.inv <- chol2inv(chol(as.matrix(SZS + landscape[['L']])))
-		landscape[['Theta.free']] <- (1 - rho) * landscape[['Theta.free']] + rho * landscape[['beta']] * Reduce('+', mclapply(1:n.batch, function(b){
-			localvar[[b]]$V[, m[[b]], drop = FALSE] %*% localvar[[b]]$Z[m[[b]], , drop = FALSE] %*% t(landscape[['S']]) %*% SZSL.inv
-		}, mc.cores = mc.cores))
-		Theta <- landscape[['Theta.free']] %*% landscape[['S']]	# all prototypes
-
-		# updating beta
-		landscape[['beta']] <- (1 - rho) * landscape[['beta']] + rho * Reduce('+', mclapply(1:n.batch, function(b){
-			(K * sum(localvar[[b]]$Z[m[[b]], , drop = FALSE]) + 0.001) / (sum(localvar[[b]]$Z[m[[b]], , drop = FALSE] * rdist(t(localvar[[b]]$V[, m[[b]], drop = FALSE]), t(Theta))^2) + 0.001)
-		}, mc.cores = mc.cores)) / n.batch
-		landscape[['beta']] <- max(landscape[['beta']], min.beta)
+		SZS <- landscape$S %*% Diagonal(x = landscape$beta * Reduce('+', mclapply(1:s$n.batch, function(b) colSums(localvar[[b]]$Z[m[[b]], , drop = FALSE]), mc.cores = control$mc.cores))) %*% t(landscape$S)
+		SZSL.inv <- chol2inv(chol(as.matrix(SZS + landscape$L)))
+		landscape$Theta.free <- (1 - rho) * landscape$Theta.free + rho * landscape$beta * Reduce('+', mclapply(1:s$n.batch, function(b){
+			Vb <- localvar[[b]]$V[, m[[b]], drop = FALSE]																																																					 
+			Zb <- localvar[[b]]$Z[m[[b]], , drop = FALSE]
+			Vb %*% Zb %*% t(landscape$S) %*% SZSL.inv
+		}, mc.cores = control$mc.cores))
+		Theta <- as.matrix(landscape$Theta.free %*% landscape$S)	# all prototypes
 
 		# updating pi.log
-		kappa <- Reduce('+', mclapply(1:n.batch, function(b){
-			colSums(localvar[[b]]$Z[m[[b]], , drop = FALSE]) + landscape[['alpha0']]
-		}, mc.cores = mc.cores)) 
+		kappa <- Reduce('+', mclapply(1:s[['n.batch']], function(b){
+			colSums(localvar[[b]]$Z[m[[b]], , drop = FALSE]) + landscape$alpha0
+		}, mc.cores = control[['mc.cores']])) 
 		landscape[['pi.log']] <- (1 - rho) * landscape[['pi.log']] + rho * (digamma(kappa) - digamma(sum(kappa))) # E[log(pi)]
 		
 		if (iter == 1 || iter %% 10 == 0){
 			J <- norm(landscape[['Theta.free']] - Theta.free.p, '2')
-			n.cluster <- length(unique(unlist(mclapply(1:n.batch, function(b) max.col(localvar[[b]]$Z), mc.cores = mc.cores))))
-			cat(sprintf('[%s] gtm | iter=%5.d | M=%5.d | n.batch=%3.d | dJ=%7.3e | # non-empty prototypes=%4.d | beta=%7.3f\n', Sys.time(), iter, M, n.batch, J, n.cluster, landscape[['beta']]))
+			n.cluster <- length(unique(unlist(mclapply(1:s[['n.batch']], function(b) max.col(localvar[[b]]$Z), mc.cores = control$mc.cores))))
+			Mc <- sum(unlist(mclapply(1:s$n.batch, function(b) apply(localvar[[b]]$Z, 1, max) > landscape$assignment.threshold, mc.cores = control$mc.cores)))
+			cat(sprintf('[%s] gtm | iter=%5.d | M=%d | n.batch=%d | Mc=%d | dJ=%7.3e | # non-empty prototypes=%4.d | beta=%7.3f\n', Sys.time(), iter, M, s$n.batch, Mc, J, n.cluster, landscape[['beta']]))
 			optval <- rbind(optval, data.frame(iter = iter, time = Sys.time(), n.cluster = n.cluster, beta = landscape[['beta']], J = J))
 			if (J < 0.01)
 				break
@@ -895,20 +893,28 @@ gtm <- function(V, landscape = NULL, CT = NULL, optimization.method = 'batch', m
 	}
 
 	# aggregating the results from different batches
-	Z <- matrix(0, M, landscape[['H.prototype']])
-	for (b in 1:mc.cores){ Z[groups == b, ] <- localvar[[b]]$Z
+	Z <- matrix(0, M, landscape[['H.prototype']], dimnames = list(colnames(V), NULL))
+	for (b in 1:s[['n.batch']]){
+		Z[s[['groups']] == b, ] <- localvar[[b]]$Z
 	}
 
-	structure(list(M = M, K = K, Z = Z, CT = CT, optval = optval, landscape = landscape), class = 'gtm')
+	cat(sprintf('[%s] gtm | updating active prototypes\n', Sys.time()))
+	landscape$is.active <- 1:landscape$H.prototype %in% max.col(Z)
+
+	cat(sprintf('[%s] gtm | updating landscape graph\n', Sys.time()))
+	landscape$graph <- as.igraph(landscape)
+
+	structure(list(M = M, K = K, V = V, Z = Z, CT = CT, optval = optval, landscape = landscape), class = 'gtm')
 
 } # end of gtm
 
 
 #' log density of Poission distribution
+#' (faster than dpois(..., log = TRUE) due to the matrix operations)
 #'
 ldpois <- function(k, mu){
 
-		mu <- mu + .Machine$double.eps
+	mu <- mu + .Machine$double.eps
 
 	if (any(k <= -1))
 				stop('k must be greater than -1')
@@ -917,7 +923,9 @@ ldpois <- function(k, mu){
 
 } # end of ldpois
 
+
 plot.gtm <- function(x, ...) plot.tcm(x, ...)
+
 
 print.landscape <- function(x, ...){
 
@@ -942,86 +950,293 @@ print.landscape <- function(x, ...){
 
 #' Correlated Cell Regression
 #'
-ccr <- function(X, U = NULL, V = NULL, a = NULL, optimization.method = 'batch', c0 = 0.001, d0 = 0.001, max.iter = 100, verbose = TRUE, batch.size = 100, decay.rate = 1, forgetting.rate = 0.75, mc.cores = 1, max.size.per.batch = 1000){
+ccr <- function(X, U = NULL, V = NULL, a = NULL, c0 = 0.001, d0 = 0.001, control = NULL){
 
 	eps <- .Machine$double.eps
-
-	# the number of iterations for Newton step for optimizing V and V.var
-	max.iter2 <- switch(optimization.method, 'batch' = 50, 'stochastic' = 1)
+	control <- set.control(control)
 
 	N <- nrow(X)	# number of genes
 	M <- ncol(X)	# number of cells
 	K <- nrow(V)	# number of metagenes
 
 	# splitting the samples into batches
-	if (M <= mc.cores * max.size.per.batch){	
-		n.batch <- mc.cores
-	}else{
-		n.batch <- ceiling(M / max.size.per.batch)
-	}
-	groups <- sample(1:n.batch, M, replace = TRUE)
-	size <- table(factor(groups, 1:n.batch))	# number of samples per core
+	s <- split.data(M, control = control)
 
 	# initialize the local variables
-	localvar <- mclapply(1:n.batch, function(b) list(a = a[groups == b]), mc.cores = mc.cores)
+	localvar <- mclapply(1:s[['n.batch']], function(b) list(a = a[s[['groups']] == b]), mc.cores = control[['mc.cores']])
+
 	if (is.null(U))
-		U <- matrix(runif(N * K), N, K)
+		stop('U cannot be NULL')
 
 	iter <- 1
 	optval <- NULL
-	Jp <- 0
-	while (iter <= max.iter){
+	while (iter <= control[['max.iter']]){
 
 		# updating all local variables: E[V], E[exp(V)] and a
-		localvar <- mclapply(1:n.batch, function(b){
-			m <- groups == b
+		localvar <- mclapply(1:s[['n.batch']], function(b){
+			m <- s[['groups']] == b
 			update.localvar(
 				X = X[, m, drop = FALSE],
 				U = U,
 				V = V[, m, drop = FALSE],
-				model = 'ccr', max.iter = max.iter2
+				model = 'ccr', control = control
 			)
-		}, mc.cores = mc.cores)
+		}, mc.cores = control[['mc.cores']])
 
-		rho <- switch(optimization.method,
-			'stochastic' = learning.rate(iter, decay.rate, forgetting.rate),
-			'batch' = 1
-		)
+		rho <- learning.rate(iter, control)
+		m <- sample.data(s, control)
 
-		if (optimization.method == 'stochastic'){
-			# SVI: sampling a subset of samples(cells) for updating global variables
-			m <- lapply(1:n.batch, function(b) sample(1:size[b], min(max(1, round(batch.size / n.batch)), size[b])))
-		}else{
-			# batch optimization: use all the samples
-			m <- lapply(1:n.batch, function(b) 1:size[b])
-		}
-
-		U <- (1 - rho) * U + rho * Reduce('+', mclapply(1:n.batch, function(b){
-			c <- U * (X[, which(groups == b)[m[[b]]]] / (U %*% localvar[[b]]$V.exp[, m[[b]], drop = FALSE] + eps)) %*% t(localvar[[b]]$V.exp[, m[[b]], drop = FALSE]) + c0
+		U <- (1 - rho) * U + rho * Reduce('+', mclapply(1:s[['n.batch']], function(b){
+			c <- U * (X[, which(s[['groups']] == b)[m[[b]]]] / (U %*% localvar[[b]]$V.exp[, m[[b]], drop = FALSE] + eps)) %*% t(localvar[[b]]$V.exp[, m[[b]], drop = FALSE]) + c0
 			d <- matrix(1, N, length(m[[b]])) %*% t(localvar[[b]]$V.exp[, m[[b]], drop = FALSE] %*% diag(exp(localvar[[b]]$a[m[[b]]]))) + d0
 			U.log <- digamma(c) - log(d + eps)	# E[log(U)]
 			exp(U.log)
-		}, mc.cores = mc.cores)) / n.batch
+		}, mc.cores = control[['mc.cores']])) / s[['n.batch']]
 
 		if (iter == 1 || iter %% 10 == 0){
-			J <- sum(unlist(mclapply(1:n.batch, function(b){
-				sum(ldpois(X[, groups == b], U %*% localvar[[b]]$V.exp %*% Diagonal(x = exp(localvar[[b]]$a))))
-			}, mc.cores = mc.cores)))
-			cat(sprintf('[%s] ccr | iter=%5.d | M=%5.d | n.batch=%3.d | dJ=%7.3e\n', Sys.time(), iter, M, n.batch, abs(J - Jp)))
+			J <- sum(unlist(mclapply(1:s[['n.batch']], function(b) sum(ldpois(X[, which(s[['groups']] == b)], U %*% localvar[[b]]$V.exp %*% diag(exp(localvar[[b]]$a)))), mc.cores = control[['mc.cores']])))
+			cat(sprintf('[%s] ccr | iter=%5.d | M=%5.d | n.batch=%3.d | J=%7.3e\n', Sys.time(), iter, M, s[['n.batch']], J))
 			optval <- rbind(optval, data.frame(iter = iter, time = Sys.time(), J = J))
-			if (abs(J - Jp) < 0.01)
-				break
-			Jp <- J
 		}
 		iter <- iter + 1
 	}
 
 	# aggregating the results from different batches
 	a <- rep(0, M)
-	for (b in 1:mc.cores){
-		a[groups == b] <- localvar[[b]]$a
+	for (b in 1:s[['n.batch']]){
+		a[s[['groups']] == b] <- localvar[[b]]$a
 	}
-	list(N = N, M = M, K = K, U = U, a = a, optval = optval)
+	list(N = N, M = M, K = K, U = U, a = a, optval = optval, control = control)
 
 } # end of ccr
+
+
+sample.data <- function(s, control){
+	if (control[['optimization.method']] == 'stochastic'){
+		# SVI: sampling a subset of samples(cells) for updating global variables
+		m <- lapply(1:s[['n.batch']], function(b) sample(1:s[['size']][b], min(max(1, round(control[['batch.size']] / s[['n.batch']])), s[['size']][b])))
+	}else{
+		# batch optimization: use all the samples
+		m <- lapply(1:s[['n.batch']], function(b) 1:s[['size']][b])
+	}
+	m
+} # end of smaple.data
+
+
+#' Splitting data into different batches
+#' 
+split.data <- function(M, f = NULL, control){
+
+	if (is.null(f)){	# if there no pre-defined groups
+		if (M <= control$mc.cores * control$max.size.per.batch){	
+			n.batch <- control$mc.cores
+		}else{
+			n.batch <- ceiling(M / control$max.size.per.batch)
+		}
+		groups <- sample(1:n.batch, M, replace = TRUE)
+	}else{
+		sp <- split(1:M, list(factor(f)))	
+		groups <- lapply(1:length(sp), function(i){
+			Mi <- length(sp[[i]])
+			if (Mi > control$max.size.per.batch){
+				n.batch.i <- ceiling(Mi / control$max.size.per.batch)
+				sample(1:n.batch.i, Mi, replace = TRUE)
+			}else
+				rep(1, Mi)
+		})
+		groups <- as.numeric(factor(sprintf('%d_%d', rep(1:length(sp), sapply(sp, length)), unlist(groups))))
+		n.batch <- max(groups)
+	}
+	size <- table(factor(groups, 1:n.batch))	# number of samples per core
+
+	# splitting the samples into batches
+	list(size = size, n.batch = n.batch, groups = groups)
+
+} # end of split.data
+
+#' Setting the default values for the arguments for optimizing TCM
+#'
+#' @param max.size.dist.matrix The maximum size of the distance matrix (for fastmds)
+
+set.control <- function(control){
+	control.default <- list(
+		optimization.method = 'batch', 
+		batch.size = 2000, 
+		ccm.max.iter = 50,
+		max.iter = 100, 
+		mc.cores = 1, 
+		decay.rate = 1, 
+		forgetting.rate = 0.75, 
+		max.size.per.batch = 2000,
+		max.size.dist.matrix = 2000
+	)
+	for (i in names(control.default))
+		if (!is.null(control[[i]]))
+			control.default[[i]] <- control[[i]]
+	control.default	
+} # end of set.control
+
+
+#' Add the trajectory on the prototype landscape
+#' @param x a tcm object
+#' @param ...  Arguments to be passed to arrow(s)
+#'
+trajectory <- function(x, ...){
+
+	Y <- x$landscape$Y.prototype	# 2D coordinates of prototypes on the landscape
+	centers <- which(x$landscape$is.active)
+	is.center <- 1:x$landscape$H.prototype %in% centers
+	Theta <- as.matrix(x$landscape$Theta.free %*% x$landscape$S)	# metagene coefficients of prototypes
+
+	if (x$landscape$type %in% c('temporal.convolving')){
+		d <- data.frame(
+			me = centers, 
+			time.point = max.col(t(x$landscape$TMC[, centers, drop = FALSE])),	# the time points of each active prototypes
+			parent = 0,
+			child = 0 
+		)
+		d[d[, 'time.point'] == 1, 'parent'] <- NA
+		d[d[, 'time.point'] == nrow(x$landscape$TMC), 'child'] <- NA
+		for (i in 1:nrow(d)){
+			if (!is.na(d[i, 'parent']) && d[i, 'parent'] == 0){
+				h <- which(x$landscape$TMC[d[i, 'time.point'] - 1, ] & is.center)	# active prototypes at the previous layer
+				parent <- h[knnx.index(t(Theta[, h]), t(Theta[, d[i, 'me'], drop = FALSE]), k = 1)[, 1]]	# the nearest convolving prototypes at current layer
+				d[i, 'parent'] <- parent
+			}
+			if (!is.na(d[i, 'child']) && d[i, 'child'] == 0){
+				h <- which(x$landscape$TMC[d[i, 'time.point'] + 1, ] & is.center)	# active prototypes at the next layer
+				child <- h[knnx.index(t(Theta[, h]), t(Theta[, d[i, 'me'], drop = FALSE]), k = 1)[, 1]]	# the nearest convolving prototypes at current layer
+				d[i, 'child'] <- child
+			}
+		}
+		d <- rbind(
+			data.frame(from = d[, 'me'], to = d[, 'child']),
+			data.frame(from = d[, 'parent'], to = d[, 'me'])
+		)
+		d <- unique(d[!is.na(d[, 'from']) & !is.na(d[, 'to']), ])
+
+		G <- as.igraph(x$landscape)
+		g <- do.call('rbind', lapply(1:nrow(d), function(i){
+			vs <- as_ids(get.shortest.paths(G, from = d[i, 'from'], to = d[i, 'to'])$vpath[[1]])
+			cbind(from = vs[1:(length(vs) - 1)], to = vs[2:length(vs)])
+		}))
+		g <- unique(g)
+		arrows(Y[1, g[, 'from']], Y[2, g[, 'from']], Y[1, g[, 'to']], Y[2, g[, 'to']], ...)
+	}
+
+} # end of trajectory
+
+#' Select genes that are significantly correlated with at least one of the metagenes
+select.genes <- function(Y, X, p.cutoff = 0.001, mc.cores = 8){
+
+	K <- nrow(X)
+	N <- nrow(Y)
+	cdr <- colSums(Y > 1) / nrow(Y)
+	P <- as.matrix(expand.grid(n = 1:N, k = 1:K))
+	P <- matrix(unlist(mclapply(1:nrow(P), function(i) summary(lm(y ~ x, data.frame(y = Y[P[i, 'n'], ], x = X[P[i, 'k'], ])))$coef[, 4][2], mc.cores = mc.cores)), nrow = N, ncol = K)
+	P <- matrix(unlist(mclapply(1:nrow(P), function(i) summary(lm(y ~ ., data.frame(y = Y[P[i, 'n'], ], X[P[i, 'k'], ], cdr)))$coef[, 4][2], mc.cores = mc.cores)), nrow = N, ncol = K)
+	rownames(P) <- rownames(Y)
+	P <- apply(P, 2, p.adjust, method = 'fdr')
+
+
+	g <- unlist(mclapply(1:K, function(k) summary(lm(y ~ x, data.frame(y = colSums(Y > 1) / nrow(Y), x = X[k, ])))$coef[, 4][2], mc.cores = mc.cores))
+
+	browser()
+	rowSums(P < p.cutoff) > 0
+
+} # end of select.genes
+
+
+#' A sampling-based fastMDS algorithm based on Yang et al.
+#'
+#' @param X The input gene by cell matrix
+#' @param K Number of dimensions
+#' @param f a vector indicating the pre-defined groups of input data
+#' @param control control parameters
+#'
+fastmds <- function(X, K, f = NULL, control){
+
+	M <- ncol(X)
+	if (any(table(f) <= K))
+		stop('pre-defined group size is smaller than K')
+
+	s <- split.data(M, f = f, control = control)	# split the data
+
+	if (M < control$max.size.dist.matrix && is.null(f)){
+		V <- t(cmdscale(as.dist(rdist(t(X))), eig = TRUE, k = K)$points)
+	}else{
+		control$max.size.per.batch <- min(control$max.size.dist.matrix, control$max.size.per.batch)
+		V.list <- mclapply(1:s$n.batch, function(b) t(cmdscale(as.dist(rdist(t(X[, s$groups == b]))), eig = TRUE, k = K)$points), mc.cores = control$mc.cores)	# MDS of cells within each batch
+		m <- lapply(1:s$n.batch, function(b) sample(1:s$size[b], max(2, min(s$size[b], ceiling(control$max.size.dist.matrix / s$n.batch)))))	# for sampling a subset of cells from each batch
+		m.align <- lapply(1:s$n.batch, function(b) which(s$groups == b)[m[[b]]])	# convert the local index to global index
+		V.align <- t(cmdscale(as.dist(rdist(t(X[, unlist(m.align)]))), eig = TRUE, k = K)$points)	# compute the MDS of sampled cells
+		V.align <- lapply(split(1:ncol(V.align), list(rep(1:s$n.batch, sapply(m, length)))), function(i) V.align[, i, drop = FALSE])
+		V.list <- mclapply(1:s$n.batch, function(b){	# map the local MDS to global MDS
+			s <- svd(V.list[[b]][, m[[b]]])
+			V.align[[b]] %*% s$v %*% diag(1 / s$d) %*% t(s$u) %*% V.list[[b]]
+		}, mc.cores = control$mc.cores)
+		V <- matrix(0, K, M)
+		for (b in 1:s[['n.batch']]){
+			V[, s[['groups']] == b] <- V.list[[b]]
+		}
+	}
+	V <- scale(V)
+	V <- matrix(c(V), nrow(V), ncol(V), dimnames = list(NULL, colnames(X)))
+	V
+} # end of fastmds
+
+
+#' Update the prototype landscape
+#'
+gtm <- function(V = NULL, landscape = NULL, CT = NULL, method = 'backward', control = NULL){
+
+	M <- ncol(V)	# number of cells
+
+	# decide the order of the cells for updating the landscape
+	if (method == 'forward'){
+		P <- do.call('rbind', lapply(1:ncol(CT), function(t) Matrix::rowSums(CT[, 1:t, drop = FALSE]) > 0))
+	}else if (method == 'backward'){
+		P <- do.call('rbind', lapply(ncol(CT):1, function(t) Matrix::rowSums(CT[, t:ncol(CT), drop = FALSE]) > 0))
+	}else if (method == 'all'){
+		P <- matrix(TRUE, nrow = 1, ncol = M)
+	}else
+		stop(sprintf('unknown method: %s', method))
+
+	for (i in 1:nrow(P)){
+		if (i == 1)
+			mem <- NULL
+		else{
+			memp <- max.col(mf$Z)
+			memp[apply(mf$Z, 1, max) < landscape$assignment.threshold] <- NA
+			mem <- rep(NA, sum(P[i, ]))
+			mem[P[i - 1, ]] <- memp
+		}
+		mf <- gtm.core(V = V[, P[i, ]], landscape = landscape, CT = CT[P[i, ], ], mem = mem[P[i, ]], control = control)
+		landscape <- mf$landscape
+#		parents <- parent.prototype(mf$landscape, prototype = which(mf$landscape$is.active))
+#		mf$landscape$is.mappable <- mf$landscape$is.active | 1:mf$landscape$H.prototype %in% unlist(parents)
+#		x2$alpha0[active.prototype(mf)] <- 1
+#		x2$alpha0[c(422, 423, 424)] <- 1
+#		mf <- gtm(V = V[, m], landscape = x2, CT = CT[m, ], update.beta = TRUE, control = control)
+#		x <- mf$landscape
+		dev.new(height = 10, width = 10); par(mar = c(2, 2, 2, 2)); plot(mf, pch = 21, bg = bg.cell[P[i, ]], cex = 2.25)
+#		c <- c(which(mf$landscape$is.active), unlist(parents)); coord <- mf$landscape$Y.prototype; text(coord[1, c], coord[2, c], c, col = 'yellow', cex = 2)
+	}
+	mf
+
+} # end of update.landscape
+
+
+parent.prototype <- function(x, prototype = NULL){
+
+	parents <- lapply(prototype, function(v){
+		t <- which(x$TMC[, v])
+		if (t > 1){	# not the first time point
+			ps <- which(x$TMC[t - 1, ])	# prototypes at the previous time points
+			ps[order(distances(x$graph, v = v, to = ps))[1:1]]
+		}
+	})
+	parents
+} # end of 
+
 
