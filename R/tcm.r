@@ -11,7 +11,7 @@ library(plotrix)	# draw.circle
 library(SummarizedExperiment) 	
 library(parallel) # mclapply
 library(wordcloud)	# textplot
-library(dpt) # Transitions, dpt
+library(destiny) # Transitions, dpt
 library(TSCAN)	# preprocess, exprmclust, TSCANorder
 
 
