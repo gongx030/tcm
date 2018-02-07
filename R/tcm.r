@@ -11,8 +11,6 @@ library(plotrix)	# draw.circle
 library(SummarizedExperiment) 	
 library(parallel) # mclapply
 library(wordcloud)	# textplot
-library(destiny) # Transitions, dpt
-library(TSCAN)	# preprocess, exprmclust, TSCANorder
 
 
 
@@ -201,13 +199,12 @@ tcm <- function(X, time.table = NULL, landscape = NULL, init = NULL, control = N
 	a <- mf$a # the cell effect
 
 	cat(sprintf('[%s] initializing prototype landscape (method=%s):\n', Sys.time(), init$method))
-	mf <- gtm(V = scale(V), landscape = landscape, CT = CT, method = init$method, control = control)
-#	mf <- gtm(V = V, landscape = landscape, CT = CT, method = init$method, update.beta = TRUE, control = control)
+	mf <- gtm(V = V, landscape = landscape, CT = CT, method = init$method, update.beta = init$update.beta, control = control)
 
 	mem <- max.col(mf$Z)
 	mem[apply(mf$Z, 1, max) < mf$landscape$assignment.threshold] <- NA
 	mf <- tcm.core(X = X, U = U, V = V, a = a, landscape = mf$landscape, CT = CT, mem = mem, control = control)
-	dev.new(height = 10, width = 10); par(mar = c(2, 2, 2, 2)); plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
+#	dev.new(height = 10, width = 10); par(mar = c(2, 2, 2, 2)); plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 
 	mf
 
@@ -1217,6 +1214,12 @@ gtm <- function(V = NULL, landscape = NULL, CT = NULL, method = 'backward', upda
 	if (landscape$type == 'plate')
 		method <- 'all'
 
+	if (is.null(update.beta))
+		update.beta <- FALSE
+
+	if (!update.beta)
+		V <- scale(V)
+
 	# decide the order of the cells for updating the landscape
 	if (method == 'forward'){
 		P <- do.call('rbind', lapply(1:ncol(CT), function(t) Matrix::rowSums(CT[, 1:t, drop = FALSE]) > 0))
@@ -1237,7 +1240,7 @@ gtm <- function(V = NULL, landscape = NULL, CT = NULL, method = 'backward', upda
 			mem[P[i - 1, ]] <- memp
 		}
 		mf <- gtm.core(V = V[, P[i, ]], landscape = landscape, CT = CT[P[i, ], ], mem = mem[P[i, ]], update.beta = update.beta, control = control)
-		dev.new(height = 10, width = 10); par(mar = c(2, 2, 2, 2)); plot(mf, pch = 21, bg = bg.cell[P[i, ]], cex = 2.25)
+#		dev.new(height = 10, width = 10); par(mar = c(2, 2, 2, 2)); plot(mf, pch = 21, bg = bg.cell[P[i, ]], cex = 2.25)
 		landscape <- mf$landscape
 #		c <- c(which(mf$landscape$is.active), unlist(parents)); coord <- mf$landscape$Y.prototype; text(coord[1, c], coord[2, c], c, col = 'yellow', cex = 2)
 	}
@@ -1247,7 +1250,7 @@ gtm <- function(V = NULL, landscape = NULL, CT = NULL, method = 'backward', upda
 
 
 #' Get a time table that consider the pseodotime information
-pseudotime.table <- function(pt, n = NA){
+pseudotime.table <- function(X, n = NA, time.table = NULL, K = 3, direction = 'center', control = NULL){
 
 	eps <- .Machine$double.eps
 	M <- ncol(X)
@@ -1255,56 +1258,29 @@ pseudotime.table <- function(pt, n = NA){
 	if (is.na(n) || n <= 1)
 		stop('n must be greater than 1')
 
-#	r.combined <- abs(scale(pt))
-	r.combined <- pt
-	breaks <- quantile(r.combined, seq(0, 1, length.out = n + 1))
+	V <- fastmds(scale(log(X + 1)), K = K, control = control)
+	V <- t(apply(V, 1, function(v) (v - min(v)) / (max(v) - min(v))))
+	pt.order <- colMeans(abs(V - 0.5))
+	pt.order <- (pt.order - min(pt.order)) / (max(pt.order) - min(pt.order))
+
+	time.order <- max.col(time.table)
+	time.order <- time.order / ncol(time.table)
+	cc <- cor(pt.order, time.order, method = 'kendall')
+	if (cc < 0)
+		pt.order <- 1 - pt.order
+	cc <- abs(cc)
+	w <- min((cc / 0.2)^2, 1)	# weight for time order
+	
+	od <- (1 - w) * pt.order + w * time.order
+	od <- (od - min(od)) / (max(od) - min(od))
+
+	breaks <- quantile(od, seq(0, 1, length.out = n + 1))
 	breaks[1] <- breaks[1] - 1
 	breaks[length(breaks)] <- breaks[length(breaks)] + 1
-	sparseMatrix(i = 1:M, j = as.numeric(cut(r.combined, breaks)), dims = c(M, n))
+	sparseMatrix(i = 1:M, j = as.numeric(cut(od, breaks)), dims = c(M, n))
 
 } # end of pseudo.time.table
 
-
-#' Inferring the pseodutime from scRNA-seq data
-pseudotime.inference <- function(X, method = 'dpt', control = NULL, ...){
-
-	eps <- .Machine$double.eps
-	M <- ncol(X)
-	param <- list(...)
-
-	if (method == 'dpt'){
-
-		if (is.null(param$K))
-			param$K <- 10
-
-		V <- fastmds(scale(log(X + 1)), K = param$K)
-		V <- scale(V)
-		pt <- dpt(Transitions(t(V)), branching = FALSE)$DPT
-
-	}else if (method == 'tscan'){
-
-		colnames(X) <- sprintf('C%d', 1:M)
-		X <- preprocess(X, minexpr_percent = 0.1)
-		od <- TSCANorder(exprmclust(X), orderonly = FALSE)
-		pt <- rep(NA, M)
-		names(pt) <- colnames(X)
-		pt[od[, 'sample_name']] <- od[, 'Pseudotime']
-		pt <- pt / M
-	
-	}else if (method == 'mds'){
-
-		if (is.null(param$K))
-			param$K <- 3
-
-		V <- fastmds(scale(log(X + 1)), K = param$K, method = 'mds', control = control)
-		V <- t(scale(t(V)))
-		pt <- colMeans(abs(V))
-
-	}else
-		stop(sprintf('unknown method for estimating the pseudotime: %s', method))
-
-	(pt - min(pt, na.rm = TRUE)) / (max(pt, na.rm = TRUE) - min(pt, na.rm = TRUE))
-} # end of pseudotime.inference
 
 
 plot.landscape <- function(x, ...){
