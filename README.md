@@ -25,7 +25,7 @@ library(tcm)
 Let us first simulate a simple temporal scRNA-seq data with 2,000 genes, 500 cells and five different lineages.  The single cell data are sampled across five time points following a sequentail differentiation model. The dropout noise was added using an exponential decay model. 
 
 ```r
-set.seed(16)
+set.seed(144)
 sim <- sim.rnaseq.ts(N = 2000, M = 500, n.lineage = 5, n.time.points = 5)
 X <- assays(sim)$count 
 time.table <- colData(sim)$time.table 
@@ -48,44 +48,41 @@ plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 legend(par('usr')[2], par('usr')[4], 1:5, bty = 'n', xpd = NA, pt.bg = col.lineage, pch = 21, col = 'black', cex = 1.75)
 ```
 
-We can visualize the inferred developmental trajectory:
+We can add the inferred developmental trajectory:
 ```r
 mf <- trajectory(mf)
 add.paths(mf, lwd = 2)
 ```
 ![alt text](/docs/images/tcm_sim.png)
 
-Let us see whether or not popular tools such as t-SNE and diffusion map are able separate three lineages: 
+Let us the performance of t-SNE and diffusion map on the same simulated dataset: 
 
 We first scale and log-transform the raw read counts data.
 ```r
-X2 <- scale(log(sim$X + 1))
+X.log <- scale(log(X + 1))
 ```
 
 We visualize the simulated temporal scRNA-seq data by t-SNE:
 ```r
 library(Rtsne)
 set.seed(1)
-y.tsne <- t(Rtsne(t(X2), check_duplicates = FALSE)$Y)
-dev.new(height = 8, width = 10)
-par(mar = c(5, 5, 5, 15))
-plot(y.tsne[1, ], y.tsne[2, ], pch = 21, cex = 1.75, bg = bg.cell, col = 'black', xlab = '', ylab = '', xaxt = 'n', yaxt = 'n', main = 't-SNE')
-legend(par('usr')[2], par('usr')[4], 1:sim$n.lineage, bty = 'n', xpd = NA, pt.bg = bg.lineage, pch = 21, col = 'black', cex = 1.75)
+y <- Rtsne(t(X.log))$Y
+dev.new(height = 7, width = 7)
+par(mar = c(5, 5, 5, 5))
+plot(y[, 1], y[, 2], pch = 21, cex = 1.5, bg = bg.cell, col = 'black', xlab = '', ylab = '', xaxt = 'n', yaxt = 'n', main = 'tsne')
 ```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/tsne_sim0.png)
+![alt text](/docs/images/tsne_sim.png)
 
 
 Similarly, we visualize the dimension reduction results from diffusion map:
 ```r
 library(diffusionMap)
-set.seed(1)
-y <- t(diffuse(dist(t(X2)))$X)[1:2, ]
-dev.new(height = 8, width = 10)
-par(mar = c(5, 5, 5, 15))
-plot(y[1, ], y[2, ], pch = 21, cex = 1.5, bg = bg.cell, col = 'black', xlab = '', ylab = '', xaxt = 'n', yaxt = 'n', main = 'diffusion map')
-legend(par('usr')[2], par('usr')[4], 1:sim$n.lineage, bty = 'n', xpd = NA, pt.bg = bg.lineage, pch = 21, col = 'black', cex = 1.75)
+y <- diffuse(dist(t(X.log)))$X[, c(1, 2)]
+dev.new(height = 7, width = 7)
+par(mar = c(5, 5, 5, 5))
+plot(y[, 1], y[, 2], pch = 21, cex = 1.5, bg = bg.cell, col = 'black', xlab = '', ylab = '', xaxt = 'n', yaxt = 'n', main = 'diffusion map')
 ```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/dm_sim0.png)
+![alt text](/docs/images/dm_sim.png)
 
 We find that for a relatively easy dataset, both t-SNE and diffusion map are able to separate three lineages.  However, the visualization produced by TCM show much improved lineage trajectories. 
 
