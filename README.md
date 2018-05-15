@@ -42,8 +42,6 @@ We then plot the dimension reduction results from TCM:
 ```r
 col.lineage <- rainbow(5) # color of cells from each lineage
 bg.cell <- col.lineage[colData(sim)$lineage] # color of each cell
-dev.new(height = 10, width = 12)
-par(mar = c(5, 5, 5, 15))
 plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 legend(par('usr')[2], par('usr')[4], 1:5, bty = 'n', xpd = NA, pt.bg = col.lineage, pch = 21, col = 'black', cex = 1.75)
 ```
@@ -60,10 +58,7 @@ X.log <- scale(log(X + 1))
 We visualize the simulated temporal scRNA-seq data by t-SNE:
 ```r
 library(Rtsne)
-set.seed(1)
 y <- Rtsne(t(X.log))$Y
-dev.new(height = 7, width = 7)
-par(mar = c(5, 5, 5, 5))
 plot(y[, 1], y[, 2], pch = 21, cex = 1.5, bg = bg.cell, col = 'black', xlab = '', ylab = '', xaxt = 'n', yaxt = 'n', main = 'tsne')
 ```
 ![alt text](/docs/images/tsne_sim.png)
@@ -73,8 +68,6 @@ Similarly, we visualize the dimension reduction results from diffusion map:
 ```r
 library(diffusionMap)
 y <- diffuse(dist(t(X.log)))$X[, c(1, 2)]
-dev.new(height = 7, width = 7)
-par(mar = c(5, 5, 5, 5))
 plot(y[, 1], y[, 2], pch = 21, cex = 1.5, bg = bg.cell, col = 'black', xlab = '', ylab = '', xaxt = 'n', yaxt = 'n', main = 'diffusion map')
 ```
 ![alt text](/docs/images/dm_sim.png)
