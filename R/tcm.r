@@ -12,6 +12,7 @@ library(SummarizedExperiment)
 library(parallel) # mclapply
 library(wordcloud)	# textplot
 
+add.paths <- function(x, ...) UseMethod('add.paths', x)
 
 
 #' Simulating time series single cell RNA-seq data
@@ -52,7 +53,7 @@ library(wordcloud)	# textplot
 #' @importFrom gplots colorpanel
 #' @importFrom plotrix draw.circle
 #' 
-sim.rnaseq.ts <- function(N = 200, M = 50, landscape = NULL, lambda.dropout = 0.25, alpha0 = 0.1, library.size = c(1e3, 1e5), n.lineage = 3, type = 'sequential', n.time.points = 10, ...){
+sim.rnaseq.ts <- function(N = 200, M = 50, landscape = NULL, lambda.dropout = 0.5, alpha0 = 0.1, library.size = c(1e3, 1e5), n.lineage = 3, type = 'sequential', n.time.points = 10, ...){
 
 	param <- list(...)
 
@@ -84,7 +85,7 @@ sim.rnaseq.ts <- function(N = 200, M = 50, landscape = NULL, lambda.dropout = 0.
 		P <- as.matrix(P %*% Diagonal(x = 1 / Matrix::colSums(P))) # column stochastic matrix of the distribution of time points on each circle
 	}else if (type == 'uniform'){
 		P <- matrix(1 / landscape$n.circle, landscape$n.circle, n.time.points)
-	}else if (type == 'beta'){
+	}else if (type == 'mixed'){
 		P <- do.call('cbind', lapply(1:n.time.points, function(i){
 			a <- runif(1, min = 0, max = 5)
 			b <- runif(1, min = 0, max = 5)
@@ -93,7 +94,8 @@ sim.rnaseq.ts <- function(N = 200, M = 50, landscape = NULL, lambda.dropout = 0.
 			breaks[length(breaks)] <- breaks[length(breaks)] + 1
 			table(cut(rbeta(10000, a, b), breaks = breaks)) / 10000
 		}))
-	}
+	}else
+		stop(sprintf('unknown type: %s', type))
 
 	GBP <- as.matrix(landscape$MC %*% P) / landscape$n.prototype	# metacell ~ time, column stochastic matrix of sampling probability
 
@@ -109,7 +111,7 @@ sim.rnaseq.ts <- function(N = 200, M = 50, landscape = NULL, lambda.dropout = 0.
 	V <- as.matrix(landscape$Theta.free %*% landscape$S[, z])	# metacell coefficient for each cell
 	V.exp <- exp(V) %*% diag(1 / colSums(exp(V)))
 	libsize <- runif(M, library.size[1], library.size[2])	# sampling the library size for each cell
-	U <- t(rdirichlet(K, alpha = rep(alpha0, N)))	# sampling the metagene basis
+	U <- t(rdirichlet(landscape$K, alpha = rep(alpha0, N)))	# sampling the metagene basis
 	Mu <- do.call('cbind', lapply(1:M, function(m) rmultinom(1, libsize[m], prob = U %*% V.exp[, m, drop = FALSE])))	# sampling the number of reads
 	prob <- exp(-lambda.dropout * log(Mu + 1))	# introduce the dropout noise by a exponential decay model
 	D <- matrix(rbinom(N * M, 1, prob), nrow = N, ncol = M) == 1
@@ -136,7 +138,7 @@ sim.rnaseq.ts <- function(N = 200, M = 50, landscape = NULL, lambda.dropout = 0.
 #' @param optimization.method the method for optimizing TCM, either 'batch' or 'stochastic' (default: stochastic)
 #' @param batch.size the size of randomly sampled cells for updating global variables in stochastic variational inference (default: 100).
 #'				Note that batch.size is ignored if 'optimization.method' is 'batch'
-#' @param max.iter maximum iterations (default: 100)
+#' @param max.iter maximum iterations (default: 50)
 #' @param mc.cores # of CPU cores for optimization (default: 1)
 #' 
 #' @return a tcm object
@@ -176,8 +178,8 @@ tcm <- function(X, time.table = NULL, landscape = NULL, init = NULL, control = N
 
 	CT <- as(as(time.table, 'matrix'), 'ngCMatrix') # cell ~ time
 
-	cat(sprintf('[%s] number of input genes(N): %d\n', Sys.time(), N))
-	cat(sprintf('[%s] number of input cells(M): %d\n', Sys.time(), M))
+	cat(sprintf('[%s] number of input rows(N): %d\n', Sys.time(), N))
+	cat(sprintf('[%s] number of input colnums(M): %d\n', Sys.time(), M))
 	cat(sprintf('[%s] number of time points(ncol(time.table)): %d\n', Sys.time(), ncol(CT)))
 	cat(sprintf('[%s] number of metagenes(K): %d\n', Sys.time(), K))
 	cat(sprintf('[%s] optimization method: %s\n', Sys.time(), control[['optimization.method']]))
@@ -204,7 +206,6 @@ tcm <- function(X, time.table = NULL, landscape = NULL, init = NULL, control = N
 	mem <- max.col(mf$Z)
 	mem[apply(mf$Z, 1, max) < mf$landscape$assignment.threshold] <- NA
 	mf <- tcm.core(X = X, U = U, V = V, a = a, landscape = mf$landscape, CT = CT, mem = mem, control = control)
-#	dev.new(height = 10, width = 10); par(mar = c(2, 2, 2, 2)); plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 
 	mf
 
@@ -390,15 +391,23 @@ plot.tcm <- function(x, ...){
 
 		Y.cell2 <- t(jitter2(t(coord[, max.col(x$Z)]), amount = 0.125 * max(lim)))	# jittered coordinate of cells
 		points(Y.cell2[1, ], Y.cell2[2, ], ...)
-
-		if (!is.null(x$landscape$trajectory)){
-			edge.list <- get.edgelist(x$landscape$trajectory)
-			segments(Y[1, edge.list[, 1]], Y[2, edge.list[, 1]], Y[1, edge.list[, 2]], Y[2, edge.list[, 2]])
-		}
-
 	}
 
 } # end of plot.tcm
+
+
+#' density plot of the landscape
+image.tcm <- function(x, ...){
+
+	param <- list(...)
+	if (x$landscape$type %in% c('temporal.convolving', 'plate', 'ladder')){
+		coord <- x$landscape$Y.prototype
+		smoothScatter(t(coord[, max.col(x$Z)]), axes = FALSE, nbin = 256, bandwidth = 0.01)
+	}
+
+} # end of image.tcm
+
+image.gtm <- function(x, ...) image.tcm(x, ...)
 
 
 #' Add the labels of active prototypes
@@ -556,6 +565,7 @@ update.localvar <- function(X, U, V = NULL, V.exp = NULL, W = NULL, landscape = 
 #' @param n.circle prototypes per layer (S)
 #' @param n.prototype the number of layers (R)
 #' @param n.prev the number of layers of convolving prototypes (R - rho)
+#'
 landscape <- function(type = 'temporal.convolving', K = 10, ...){
 
 	param <- list(...)
@@ -653,9 +663,63 @@ landscape <- function(type = 'temporal.convolving', K = 10, ...){
 		alpha0 <- rep(alpha00, H.prototype)
 		pi.log <- digamma(alpha0) - digamma(sum(alpha0))	# E[log(pi)]
 
-	}else if  (type == 'time.plate'){
+	}else if  (type == 'ladder'){
 
-	}else if (type == 'convolving.plate'){
+		if (is.null(param[['lambda']]))
+			lambda <- 1
+		else
+			lambda <- param[['lambda']]
+
+		time.points <- param$time.points
+		if (is.null(time.points) || time.points < 2)
+			stop('at least two time points must be specified for ladder landscape')
+
+		n.prototype <- param$n.prototype
+		n.circle <- param$n.circle
+		H.free <- H.prototype <- H <- time.points * n.circle * n.prototype # number of prototypes 
+		Y.prototype <- t(as.matrix(expand.grid(x = seq(-1, 1, length.out = n.prototype), y = seq(-1, 1, length.out = n.circle * time.points))))
+		Yp.prototype <- NULL
+		L.inv <- rdist(t(Y.prototype))	# pairwise euclidean distance between prototypes
+		L.inv <- exp(-L.inv^2 / (2 * lambda^2))	# squared exponential covariance function
+		L.inv <- as.matrix(nearPD(L.inv)$mat)	# convert to a nearest PSD matrix
+		L <- chol2inv(chol(L.inv))	# inverse the corrected covariance matrix by Cholesky decomposition
+		S <- Diagonal(n = H.prototype)
+		is.free <- rep(TRUE, H.prototype)
+		n.prev <- NULL
+		TMC <- sparseMatrix(i = rep(1:time.points, each = n.circle * n.prototype), j = 1:H.prototype, dims = c(time.points, H.prototype))	# time ~ prototypes
+		MC <- NULL
+		Theta.free <- mvrnorm(K, rep(0, H.prototype), Sigma = L.inv)
+		alpha0 <- rep(alpha00, H.prototype)
+		pi.log <- digamma(alpha0) - digamma(sum(alpha0))	# E[log(pi)]
+
+	}else if (type == 'temporal.plate'){
+
+		if (is.null(param$lambda))
+			lambda <- 1
+		else
+			lambda <- param$lambda
+
+		time.points <- param$time.points
+		if (is.null(time.points) || time.points < 2)
+			stop('at least two time points must be specified for ladder landscape')
+
+		n.prototype <- param$n.prototype
+		n.circle <- param$n.circle
+		H.free <- H.prototype <- H <- time.points * n.circle * n.prototype # number of prototypes 
+		Yp.prototype <- as.matrix(expand.grid(angle = seq(0, 2 * pi, length.out = n.prototype + 1)[-1], r = seq(0, 1, length.out = n.circle * time.points + 1)[-1]))	# polar coord
+		Y.prototype <- rbind(x = Yp.prototype[, 'r'] * cos(Yp.prototype[, 'angle']), y = Yp.prototype[, 'r'] * sin(Yp.prototype[, 'angle']))	# x-y coord
+		L.inv <- rdist(t(Y.prototype))	# pairwise euclidean distance between prototypes
+		L.inv <- exp(-L.inv^2 / (2 * lambda^2))	# squared exponential covariance function
+		L.inv <- as.matrix(nearPD(L.inv)$mat)	# convert to a nearest PSD matrix
+		L <- chol2inv(chol(L.inv))	# inverse the corrected covariance matrix by Cholesky decomposition
+		S <- Diagonal(n = H.prototype)
+		is.free <- rep(TRUE, H.prototype)
+		n.prev <- NULL
+		TMC <- sparseMatrix(i = rep(1:time.points, each = n.circle * n.prototype), j = 1:H.prototype, dims = c(time.points, H.prototype))	# time ~ prototypes
+		MC <- NULL
+		Theta.free <- mvrnorm(K, rep(0, H.prototype), Sigma = L.inv)
+		alpha0 <- rep(alpha00, H.prototype)
+		pi.log <- digamma(alpha0) - digamma(sum(alpha0))	# E[log(pi)]
 
 	}else
 		stop(sprintf('unknown landscape type: %s', type))
@@ -700,28 +764,30 @@ landscape <- function(type = 'temporal.convolving', K = 10, ...){
 #'
 as.igraph.landscape <- function(x, ...){
 
-	if (x$type %in% c('temporal.convolving', 'plate')){
+	if (x$type %in% c('temporal.convolving', 'plate', 'temporal.plate'))
 		Yp <- transform(x$Yp.prototype, angle = factor(angle / (2 * pi)), r = factor(r))
-		rs <- levels(Yp[, 2])
-		angles <- levels(Yp[, 1])
-		a <- rbind( 
-			do.call('rbind', lapply(rs, function(r){
-				v <- which(Yp[, 2] == r)
-				data.frame(from = v[1:length(v)], to = v[c(2:length(v), 1)])
-			})),
-			do.call('rbind', lapply(angles, function(angle){
-				v <- which(Yp[, 1] == angle)
-				data.frame(from = v[1:(length(v) - 1)], to = v[2:length(v)])
-			}))
-		)
+	else if (x$type %in% c('ladder'))
+		Yp <- data.frame(angle = factor(x$Y.prototype[1, ]), r = factor(x$Y.prototype[2, ]))
+
+	rs <- levels(Yp[, 2])
+	angles <- levels(Yp[, 1])
+	a <- rbind( 
+		do.call('rbind', lapply(rs, function(r){
+			v <- which(Yp[, 2] == r)
+			data.frame(from = v[1:length(v)], to = v[c(2:length(v), 1)])
+		})),
+		do.call('rbind', lapply(angles, function(angle){
+			v <- which(Yp[, 1] == angle)
+			data.frame(from = v[1:(length(v) - 1)], to = v[2:length(v)])
+		}))
+	)
 		
-		Theta <- as.matrix(x[['Theta.free']] %*% x[['S']])	# all prototypes
-		w <- sqrt(Matrix::colSums((Theta[, a[, 1]] - Theta[, a[, 2]])^2))	# distance between neighboring prototypes
-		a <- cbind(a, weight = w)
-		A <- sparseMatrix(i = a[, 'from'], j = a[, 'to'], x = a[, 'weight'], dims = c(x$H.prototype, x$H.prototype))
-		A <- A + t(A)
-		A <- graph.adjacency(A, weighted = TRUE, mode = 'undirected')
-	}
+	Theta <- as.matrix(x[['Theta.free']] %*% x[['S']])	# all prototypes
+	w <- sqrt(Matrix::colSums((Theta[, a[, 1]] - Theta[, a[, 2]])^2))	# distance between neighboring prototypes
+	a <- cbind(a, weight = w)
+	A <- sparseMatrix(i = a[, 'from'], j = a[, 'to'], x = a[, 'weight'], dims = c(x$H.prototype, x$H.prototype))
+	A <- A + t(A)
+	A <- graph.adjacency(A, weighted = TRUE, mode = 'undirected')
 	A
 } # end of as.igraph.landscape
 
@@ -810,13 +876,16 @@ gtm.core <- function(V, landscape = NULL, CT = NULL, mem = NULL, update.beta = F
 
 	if (!is.null(landscape)){
 		Theta <- as.matrix(landscape$Theta.free %*% landscape$S)	# all prototypes
-		if (landscape[['type']] == 'temporal.convolving'){
+		if (landscape[['type']] %in% c('temporal.convolving', 'temporal.plate')){
 			if (is.null(CT))
-				stop('CT cannot be NULL if landscape type is temporal.convolving')
+				stop('CT cannot be NULL') 
 			W <- CT %*% landscape$TMC	# a binary cell ~ prototype assignment matrix
 		}else if (landscape[['type']] %in% c('som', 'plate')){
 			W <- as(matrix(TRUE, M, landscape$H.prototype), 'ngCMatrix')
-		}
+		}else if (landscape$type %in% c('ladder')){
+			W <- CT %*% landscape$TMC	# a binary cell ~ prototype assignment matrix
+		}else
+			stop(sprintf('unknown landscape: %s', landscape$type))
 	}else
 		stop('landscape must be specified')
 
@@ -833,6 +902,7 @@ gtm.core <- function(V, landscape = NULL, CT = NULL, mem = NULL, update.beta = F
 	
 	# splitting the samples into batches
 	s <- split.data(M, control = control)
+
 
 	iter <- 1
 	optval <- NULL
@@ -865,7 +935,7 @@ gtm.core <- function(V, landscape = NULL, CT = NULL, mem = NULL, update.beta = F
 		Theta <- as.matrix(landscape$Theta.free %*% landscape$S)	# all prototypes
 
 		if (update.beta){
-			landscape[['beta']] <- (1 - rho) * landscape[['beta']] + rho * Reduce('+', mclapply(1:s[['n.batch']], function(b){
+			landscape$beta <- (1 - rho) * landscape[['beta']] + rho * Reduce('+', mclapply(1:s[['n.batch']], function(b){
 				(K * sum(localvar[[b]]$Z[m[[b]], , drop = FALSE]) + 0.001) / (sum(localvar[[b]]$Z[m[[b]], , drop = FALSE] * rdist(t(localvar[[b]]$V[, m[[b]], drop = FALSE]), t(Theta))^2) + 0.001)
 			}, mc.cores = control[['mc.cores']])) / s[['n.batch']]
 		}
@@ -1058,13 +1128,16 @@ set.control <- function(control){
 	control.default <- list(
 		optimization.method = 'batch', 
 		batch.size = 2000, 
-		ccm.max.iter = 50,
+#		ccm.max.iter = 50,
+#		max.iter = 100, 
+		ccm.max.iter = 10,
 		max.iter = 100, 
 		mc.cores = 1, 
 		decay.rate = 1, 
 		forgetting.rate = 0.75, 
 		max.size.per.batch = 2000,
-		max.size.dist.matrix = 2000
+		max.size.dist.matrix = 2000,
+		fine.tune = FALSE
 	)
 	for (i in names(control.default))
 		if (!is.null(control[[i]]))
@@ -1073,81 +1146,86 @@ set.control <- function(control){
 } # end of set.control
 
 
-#' Add the trajectory on the prototype landscape
+#' Plot the paths on the prototype landscape
 #' @param x a tcm object
 #' @param ...  Arguments to be passed to arrow(s)
 #'
-trajectory <- function(x, ...){
+add.paths.landscape <- function(x, ...){
 
 	param <- list(...)
 
-	if (!is.null(x$paths)){
-		Y <- x$Y.prototype	# 2D coordinates of prototypes on the landscape
+	if (is.null(x$paths)){
+		stop('landscape$path is NULL')
+	}else{
+		Y <- x$Y.prototype
 		g <- do.call('rbind', lapply(1:length(x$paths), function(i){
 			vs <- x$paths[[i]]
 			cbind(from = vs[1:(length(vs) - 1)], to = vs[2:length(vs)])
 		}))
 		g <- unique(g)
 		segments(Y[1, g[, 'from']], Y[2, g[, 'from']], Y[1, g[, 'to']], Y[2, g[, 'to']], ...)
-#		arrows(Y[1, g[, 'from']], Y[2, g[, 'from']], Y[1, g[, 'to']], Y[2, g[, 'to']], ...)
 	}
-} # end of trajectory
+
+} # end of add.paths.landscape
+
+add.paths.tcm <- function(x, ...) add.paths(x$landscape, ...)
 
 
-
-
-
-trajectory2 <- function(x, ...){
+#' Find the trajectory
+trajectory <- function(x, ...){
 
 	Y <- x$landscape$Y.prototype	# 2D coordinates of prototypes on the landscape
 
 	if (x$landscape$type %in% c('temporal.convolving', 'plate')){
 
-		if (is.null(x$paths)){
+		mem <- max.col(x$Z)
+		centers <- which(x$landscape$is.active)
+		is.center <- 1:x$landscape$H.prototype %in% centers
+		Theta <- as.matrix(x$landscape$Theta.free %*% x$landscape$S)	# metagene coefficients of prototypes
 
-			centers <- which(x$landscape$is.active)
-			is.center <- 1:x$landscape$H.prototype %in% centers
-			Theta <- as.matrix(x$landscape$Theta.free %*% x$landscape$S)	# metagene coefficients of prototypes
-
-			d <- data.frame(
-				me = centers, 
-				time.point = max.col(t(x$landscape$TMC[, centers, drop = FALSE])),	# the time points of each active prototypes
-				parent = 0,
-				child = 0 
-			)
-			d[d[, 'time.point'] == 1, 'parent'] <- NA
-			d[d[, 'time.point'] == nrow(x$landscape$TMC), 'child'] <- NA
-			for (i in 1:nrow(d)){
-				if (!is.na(d[i, 'parent']) && d[i, 'parent'] == 0){
-					h <- which(x$landscape$TMC[d[i, 'time.point'] - 1, ] & is.center)	# active prototypes at the previous layer
-					parent <- h[knnx.index(t(Theta[, h]), t(Theta[, d[i, 'me'], drop = FALSE]), k = 1)[, 1]]	# the nearest convolving prototypes at current layer
-					d[i, 'parent'] <- parent
-				}
-				if (!is.na(d[i, 'child']) && d[i, 'child'] == 0){
-					h <- which(x$landscape$TMC[d[i, 'time.point'] + 1, ] & is.center)	# active prototypes at the next layer
-					child <- h[knnx.index(t(Theta[, h]), t(Theta[, d[i, 'me'], drop = FALSE]), k = 1)[, 1]]	# the nearest convolving prototypes at current layer
-					d[i, 'child'] <- child
-				}
+		d <- data.frame(
+			me = centers, 
+			time.point = max.col(t(x$landscape$TMC[, centers, drop = FALSE])),	# the time points of each active prototypes
+			parent = 0,
+			child = 0 
+		)
+		d[d[, 'time.point'] == 1, 'parent'] <- NA	# the cells at the first time point has no parent
+		d[d[, 'time.point'] == nrow(x$landscape$TMC), 'child'] <- NA	# the cells at the last time point has no children
+		for (i in 1:nrow(d)){
+			if (!is.na(d[i, 'parent']) && d[i, 'parent'] == 0){
+				h <- which(x$landscape$TMC[d[i, 'time.point'] - 1, ] & is.center)	# active prototypes at the previous layer
+				parent <- h[knnx.index(t(Theta[, h]), t(Theta[, d[i, 'me'], drop = FALSE]), k = 1)[, 1]]	# the nearest convolving prototypes at current layer
+				d[i, 'parent'] <- parent
 			}
-			d <- rbind(
-				data.frame(from = d[, 'me'], to = d[, 'child']),
-				data.frame(from = d[, 'parent'], to = d[, 'me'])
-			)
-			d <- unique(d[!is.na(d[, 'from']) & !is.na(d[, 'to']), ])
-			G <- as.igraph(x$landscape)
-			x$paths <- lapply(1:nrow(d), function(i){
-				as.vector(get.shortest.paths(G, from = d[i, 'from'], to = d[i, 'to'])$vpath[[1]])
-			})
+			if (!is.na(d[i, 'child']) && d[i, 'child'] == 0){
+				h <- which(x$landscape$TMC[d[i, 'time.point'] + 1, ] & is.center)	# active prototypes at the next layer
+				child <- h[knnx.index(t(Theta[, h]), t(Theta[, d[i, 'me'], drop = FALSE]), k = 1)[, 1]]	# the nearest convolving prototypes at current layer
+				d[i, 'child'] <- child
+			}
 		}
-		browser()
 
-		g <- do.call('rbind', lapply(1:nrow(d), function(i){
-			vs <- as_ids(get.shortest.paths(G, from = d[i, 'from'], to = d[i, 'to'])$vpath[[1]])
+		g <- rbind(
+			data.frame(from = d[, 'me'], to = d[, 'child']),
+			data.frame(from = d[, 'parent'], to = d[, 'me'])
+		)
+		g <- unique(g[!is.na(g[, 'from']) & !is.na(g[, 'to']), ])
+		g <- do.call('rbind', lapply(1:nrow(g), function(i){
+			vs <- as.vector(get.shortest.paths(x$landscape$graph, from = g[i, 'from'], to = g[i, 'to'])$vpath[[1]])
 			cbind(from = vs[1:(length(vs) - 1)], to = vs[2:length(vs)])
 		}))
-		g <- unique(g)
-		arrows(Y[1, g[, 'from']], Y[2, g[, 'from']], Y[1, g[, 'to']], Y[2, g[, 'to']], ...)
+		G <- sparseMatrix(i = g[, 'from'], j = g[, 'to'], x = sqrt(colSums((Theta[, g[, 'from']] - Theta[, g[, 'to']])^2)), dims = c(x$landscape$H.prototype, x$landscape$H.prototype))
+		G <- (G + t(G)) / 2
+		G <- graph.adjacency(G, mode = 'undirected', weighted = TRUE)
+		roots <- d[is.na(d[, 'parent']), 'me']
+		leaves <- d[is.na(d[, 'child']), 'me']
+		roots <- roots[apply(distances(G, roots, leaves), 2, which.min)]
+		x$landscape$paths <- lapply(1:length(leaves), function(i) as.vector(get.shortest.paths(G, from = roots[i], to = leaves[i])$vpath[[1]]))
+		x$branching <- do.call('cbind', lapply(x$landscape$paths, function(i) mem %in% i))
+		is.orphan <- rowSums(x$branching > 0) == 0
+		if (any(is.orphan))
+			x$branching[is.orphan, ] <- NA
 	}
+	x
 
 } # end of trajectory
 
@@ -1171,21 +1249,25 @@ fastmds <- function(X, K, f = NULL, method = 'mds', scale = FALSE, control = NUL
 
 	if (M < control$max.size.dist.matrix && is.null(f)){
 		if (method == 'mds')
-			V <- t(cmdscale(as.dist(rdist(t(X))), eig = TRUE, k = K)$points)
+			V <- tryCatch({
+				t(cmdscale(as.dist(rdist(t(X))), eig = FALSE, k = K))
+			}, error = function(e){
+				stop('cmdscale failed')
+			})
 		else if (method == 'tsne')
 			V <- t(Rtsne(t(X), check_duplicates = FALSE)$Y)
 	}else{
 		control$max.size.per.batch <- min(control$max.size.dist.matrix, control$max.size.per.batch)
 		V.list <- mclapply(1:s$n.batch, function(b){
 			if (method == 'mds')
-				t(cmdscale(as.dist(rdist(t(X[, s$groups == b]))), eig = TRUE, k = K)$points)
+				t(cmdscale(as.dist(rdist(t(X[, s$groups == b]))), eig = FALSE, k = K))
 			else if (method == 'tsne')
 				t(Rtsne(t(X[, s$groups == b]), check_duplicates = FALSE)$Y)
 		}, mc.cores = control$mc.cores)	# MDS of cells within each batch
 		m <- lapply(1:s$n.batch, function(b) sample(1:s$size[b], max(2, min(s$size[b], ceiling(control$max.size.dist.matrix / s$n.batch)))))	# for sampling a subset of cells from each batch
 		m.align <- lapply(1:s$n.batch, function(b) which(s$groups == b)[m[[b]]])	# convert the local index to global index
 		if (method == 'mds')
-			V.align <- t(cmdscale(as.dist(rdist(t(X[, unlist(m.align)]))), eig = TRUE, k = K)$points)	# compute the MDS of sampled cells
+			V.align <- t(cmdscale(as.dist(rdist(t(X[, unlist(m.align)]))), eig = FALSE, k = K))	# compute the MDS of sampled cells
 		else if (method == 'tsne')
 			V.align <- t(Rtsne(t(X[, unlist(m.align)]), check_duplicates = FALSE)$Y)
 		V.align <- lapply(split(1:ncol(V.align), list(rep(1:s$n.batch, sapply(m, length)))), function(i) V.align[, i, drop = FALSE])
@@ -1203,6 +1285,7 @@ fastmds <- function(X, K, f = NULL, method = 'mds', scale = FALSE, control = NUL
 	V <- matrix(c(V), nrow(V), ncol(V), dimnames = list(NULL, colnames(X)))
 	V
 } # end of fastmds
+
 
 
 #' Update the prototype landscape
