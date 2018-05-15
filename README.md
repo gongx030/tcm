@@ -52,7 +52,7 @@ We can visualize the inferred developmental trajectory:
 mf <- trajectory(mf)
 add.paths(mf, lwd = 2)
 ```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/tcm_sim0.png)
+![alt text](/images/tcm_sim.png)
 
 Let us see whether or not popular tools such as t-SNE and diffusion map are able separate three lineages: 
 
