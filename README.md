@@ -20,21 +20,35 @@ We first load the tcm package:
 library(tcm)
 ```
 
-### 2.1 A simulated temporal scRNA-seq dataset with 2,000 genes, 200 cells and three lineages.
+### 2.1 A simulated temporal scRNA-seq dataset with 2,000 genes, 500 cells and five lineages.
 
-Let us first simulate a simple temporal scRNA-seq data with 2,000 genes, 200 cells and three different lineages.  The single cell data are sampled across three time points following a sequentail differentiation model. The dropout noise was added using an exponential decay model. 
+Let us first simulate a simple temporal scRNA-seq data with 2,000 genes, 500 cells and five different lineages.  The single cell data are sampled across five time points following a sequentail differentiation model. The dropout noise was added using an exponential decay model. 
 
 ```r
-set.seed(1)
-sim <- sim.rnaseq.ts(N = 2000, M = 200, n.lineage = 3, type = 'sequential', n.time.points = 3)
+set.seed(16)
+ls.sim <- landscape(type = 'plate', K = 15, n.prototype = 10, n.circle = 100)
+sim <- sim.rnaseq.ts(N = 2000, M = 500, landscape = ls.sim, n.lineage = 5, type = 'sequential', n.time.points = 5)
 ```
 
-We then visualize the simulated temporal scRNA-seq data by TCM.  We set number of metagenes (K) to 10, number of circle per layer (n.circle) to 10, number of prototypes per circle (n.metacell) to 15 and number of convolving layers (n.prev) to 3.  TCM also needs a binary indicator matrix (time) indicating the timestamp of each cell.  Note that one cell can be assigned to multiple time points. 
+We then visualize the simulated temporal scRNA-seq data by TCM.  By default, the number of metagenes (K) is set to 15, number of circle per time point (n.circle) is 10, number of prototypes per circle (n.metacell) is 15 and number of convolving layers (n.prev), that is, the number of circles mapped from the previous time point is set to 3. We define 
+
+```r
+ls <- landscape(type = 'temporal.convolving', time.points = 5, K = 15)
+```
+
+```r
+mf <- tcm(assays(sim)$count, time.table = colData(sim)$time.table, landscape = ls, init = list(method = 'all', update.beta = TRUE), control = list(max.iter = 50, mc.cores = 2, optimization.method = 'batch'))
+```
+ 
+ TCM also needs a binary indicator matrix (time) indicating the timestamp of each cell.  Note that one cell can be assigned to multiple time points. 
+
 ```r
 time.table <- table(1:sim$M, factor(sim$time))
 set.seed(1)
 mf <- tcm(sim$X, K = 10, time = time.table, n.circle = 10, n.metacell = 15, n.prev = 3, max.iter = 50)
 ```
+
+
 
 We then plot the dimension reduction results from TCM:
 ```r
