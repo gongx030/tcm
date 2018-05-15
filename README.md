@@ -26,38 +26,31 @@ Let us first simulate a simple temporal scRNA-seq data with 2,000 genes, 500 cel
 
 ```r
 set.seed(16)
-ls.sim <- landscape(type = 'plate', K = 15, n.prototype = 10, n.circle = 100)
-sim <- sim.rnaseq.ts(N = 2000, M = 500, landscape = ls.sim, n.lineage = 5, type = 'sequential', n.time.points = 5)
+sim <- sim.rnaseq.ts(N = 2000, M = 500, n.lineage = 5, n.time.points = 5)
+X <- assays(sim)$count 
+time.table <- colData(sim)$time.table 
 ```
 
-We then visualize the simulated temporal scRNA-seq data by TCM.  By default, the number of metagenes (K) is set to 15, number of circle per time point (n.circle) is 10, number of prototypes per circle (n.metacell) is 15 and number of convolving layers (n.prev), that is, the number of circles mapped from the previous time point is set to 3. We define 
+Note that X is the simulated gene by cell read count matrix (2,000 by 500), and time.table is a cell by time point binary matrix (500 by 5), indicating the timestamp of each cell.  
 
+We run TCM on the simulated temporal scRNA-seq. 
 ```r
-ls <- landscape(type = 'temporal.convolving', time.points = 5, K = 15)
+mf <- tcm(X, time.table = time.table)
 ```
-
-```r
-mf <- tcm(assays(sim)$count, time.table = colData(sim)$time.table, landscape = ls, init = list(method = 'all', update.beta = TRUE), control = list(max.iter = 50, mc.cores = 2, optimization.method = 'batch'))
-```
- 
- TCM also needs a binary indicator matrix (time) indicating the timestamp of each cell.  Note that one cell can be assigned to multiple time points. 
-
-```r
-time.table <- table(1:sim$M, factor(sim$time))
-set.seed(1)
-mf <- tcm(sim$X, K = 10, time = time.table, n.circle = 10, n.metacell = 15, n.prev = 3, max.iter = 50)
-```
-
-
 
 We then plot the dimension reduction results from TCM:
 ```r
-bg.lineage <- rainbow(sim$n.lineage) # color for each lineage
-bg.cell <- bg.lineage[sim$lineage] # color for each cell
+col.lineage <- rainbow(5) # color of cells from each lineage
+bg.cell <- col.lineage[colData(sim)$lineage] # color of each cell
 dev.new(height = 10, width = 12)
 par(mar = c(5, 5, 5, 15))
 plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
-legend(par('usr')[2], par('usr')[4], 1:sim$n.lineage, bty = 'n', xpd = NA, pt.bg = bg.lineage, pch = 21, col = 'black', cex = 1.75)
+legend(par('usr')[2], par('usr')[4], 1:5, bty = 'n', xpd = NA, pt.bg = col.lineage, pch = 21, col = 'black', cex = 1.75)```
+
+We can visualize the inferred developmental trajectory:
+```r
+mf <- trajectory(mf)
+add.paths(mf, lwd = 2)
 ```
 ![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/tcm_sim0.png)
 
