@@ -48,11 +48,6 @@ plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 legend(par('usr')[2], par('usr')[4], 1:5, bty = 'n', xpd = NA, pt.bg = col.lineage, pch = 21, col = 'black', cex = 1.75)
 ```
 
-We can add the inferred developmental trajectory:
-```r
-mf <- trajectory(mf)
-add.paths(mf, lwd = 2)
-```
 ![alt text](/docs/images/tcm_sim.png)
 
 Let us the performance of t-SNE and diffusion map on the same simulated dataset: 
