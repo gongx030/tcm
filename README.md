@@ -45,7 +45,8 @@ bg.cell <- col.lineage[colData(sim)$lineage] # color of each cell
 dev.new(height = 10, width = 12)
 par(mar = c(5, 5, 5, 15))
 plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
-legend(par('usr')[2], par('usr')[4], 1:5, bty = 'n', xpd = NA, pt.bg = col.lineage, pch = 21, col = 'black', cex = 1.75)```
+legend(par('usr')[2], par('usr')[4], 1:5, bty = 'n', xpd = NA, pt.bg = col.lineage, pch = 21, col = 'black', cex = 1.75)
+```
 
 We can visualize the inferred developmental trajectory:
 ```r
