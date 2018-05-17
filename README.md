@@ -120,6 +120,29 @@ plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 ```
 ![alt text](/docs/images/tcm_guo.png)
 
+## 3.2 Single cell RNA-seq of the development of human primordial germ cells (PGC) and neighboring somatic cells from weeks 4 to 19 post-gestation. 
+```r
+library(scDatasets)
+data(guo2)
+X <- assays(guo2)$count
+X <- preprocess(X)
+time.table <- colData(guo2)$time.table
+
+cg <- factor(colData(guo2)[['source.name']])
+col.cg <- rainbow(nlevels(cg))
+names(col.cg) <- levels(cg)
+bg.cell <- col.cg[as.numeric(cg)]
+bg.cell[colData(guo2)[['developmental.stage']] == '17 week gestation' & colData(guo2)[['gender']] == 'female' & colData(guo2)[['source.name']] == 'Primordial Germ Cells'] <- 'gold'
+bg.cell[colData(guo2)[['developmental.stage']] == '19 week gestation' & colData(guo2)[['gender']] == 'male' & colData(guo2)[['source.name']] == 'Primordial Germ Cells'] <- 'purple'
+
+set.seed(1)
+mf <- tcm(X, time.table = time.table)
+plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
+```
+![alt text](/docs/images/tcm_guo2.png)
+
+
+
 ## 3.2 Single cell RNA-seq of iPSC-CM differentiation
 ```r
 library(scDatasets)
@@ -232,27 +255,6 @@ par(mar = c(5, 5, 5, 15))
 plot(mf, pch = 21, bg = num2color(log(X['ENSG00000115461', ] + 1)), cex = 2.25, main = 'IGFBP5')
 ```
 ![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/Trapnell_IGFBP5.png)
-
-## 3.5 Single cell RNA-seq of the development of human primordial germ cells (PGC) and neighboring somatic cells from weeks 4 to 19 post-gestation. 
-```r
-library(scDatasets)
-data(guo2)
-X <- assays(guo2)$count
-X <- preprocess(X)
-time.table <- colData(guo2)$time.table
-
-cg <- factor(colData(guo2)[['source.name']])
-col.cg <- rainbow(nlevels(cg))
-names(col.cg) <- levels(cg)
-bg.cell <- col.cg[as.numeric(cg)]
-bg.cell[colData(guo2)[['developmental.stage']] == '17 week gestation' & colData(guo2)[['gender']] == 'female' & colData(guo2)[['source.name']] == 'Primordial Germ Cells'] <- 'gold'
-bg.cell[colData(guo2)[['developmental.stage']] == '19 week gestation' & colData(guo2)[['gender']] == 'male' & colData(guo2)[['source.name']] == 'Primordial Germ Cells'] <- 'purple'
-
-set.seed(1)
-mf <- tcm(X, time.table = time.table)
-plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
-```
-![alt text](/docs/images/tcm_guo2.png)
 
 
 # 4. Session Information
