@@ -20,7 +20,7 @@ We first load the tcm package:
 library(tcm)
 ```
 
-### 2.1 A simulated temporal scRNA-seq dataset with 2,000 genes, 500 cells and five lineages.
+### 2.1 Visualizing a simulated temporal scRNA-seq dataset with 2,000 genes, 500 cells and five lineages.
 
 Let us first simulate a simple temporal scRNA-seq data with 2,000 genes, 500 cells and five different lineages.  The single cell data are sampled across five time points following a sequentail differentiation model. The dropout noise was added using an exponential decay model. 
 
@@ -74,57 +74,30 @@ plot(y[, 1], y[, 2], pch = 21, cex = 1.5, bg = bg.cell, col = 'black', xlab = ''
 
 We find that for a relatively easy dataset, both t-SNE and diffusion map are able to separate three lineages.  However, the visualization produced by TCM show much improved lineage trajectories. 
 
-### 2.2 A simulated temporal scRNA-seq dataset with 2,000 genes, 500 cells and five lineages.
-
-Let us then turn to a more heterogenous dataset.  We simulate a temporal scRNA-seq dataset with 2,000 genes, 500 cells and **five different lineages**. The single cell data are sampled across **five time points** following a sequential differentiation model and an exponential decay model for the dropout noise. 
+### 2.2 Visualizing a large-scale simulated temporal scRNA-seq dataset with 2,000 genes, 10,000 cells and five lineages.
 
 ```r
-set.seed(1)
-sim <- sim.rnaseq.ts(N = 2000, M = 500, n.lineage = 5, type = 'sequential', n.time.points = 5)
+set.seed(2)
+sim <- sim.rnaseq.ts(N = 2000, M = 10000, n.lineage = 5, n.time.points = 3)
+X <- assays(sim)$count
+time.table <- colData(sim)$time.table
 ```
 
-We visualize dimension reduction results produced by TCM:
-```r
-time.table <- table(1:sim$M, factor(sim$time))
-set.seed(1)
-mf <- tcm(sim$X, K = 15, time = time.table, n.circle = 10, n.metacell = 15, n.prev = 3, max.iter = 50)
-bg.lineage <- rainbow(sim$n.lineage) # color for each lineage
-bg.cell <- bg.lineage[sim$lineage] # color for each cell
-dev.new(height = 10, width = 12)
-par(mar = c(5, 5, 5, 15))
-plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
-legend(par('usr')[2], par('usr')[4], 1:sim$n.lineage, bty = 'n', xpd = NA, pt.bg = bg.lineage, pch = 21, col = 'black', cex = 1.75)
-```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/tcm_sim.png)
-
-
-We scale and log-transform the raw read counts data. 
-```r
-X2 <- scale(log(sim$X + 1))
-```
-
-Let us visualize the simulated temporal scRNA-seq data by t-SNE and diffusion map:
-```r
-set.seed(1)
-y.tsne <- t(Rtsne(t(X2), check_duplicates = FALSE)$Y)
-dev.new(height = 8, width = 10)
-par(mar = c(5, 5, 5, 15))
-plot(y.tsne[1, ], y.tsne[2, ], pch = 21, cex = 1.75, bg = bg.cell, col = 'black', xlab = '', ylab = '', xaxt = 'n', yaxt = 'n', main = 't-SNE')
-legend(par('usr')[2], par('usr')[4], 1:sim$n.lineage, bty = 'n', xpd = NA, pt.bg = bg.lineage, pch = 21, col = 'black', cex = 1.75)
-```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/tsne_sim.png)
+We will use stochastic variational inference for optimizaing TCM, with batch size of 2,000 cells and using four CPU cores. It will take ~15 mins on an Intel Xeon 2.6GHz computer. 
 
 ```r
-set.seed(1)
-y <- t(diffuse(dist(t(X2)))$X)[1:2, ]
-dev.new(height = 8, width = 10)
-par(mar = c(5, 5, 5, 15))
-plot(y[1, ], y[2, ], pch = 21, cex = 1.5, bg = bg.cell, col = 'black', xlab = '', ylab = '', xaxt = 'n', yaxt = 'n', main = 'diffusion map')
-legend(par('usr')[2], par('usr')[4], 1:sim$n.lineage, bty = 'n', xpd = NA, pt.bg = bg.lineage, pch = 21, col = 'black', cex = 1.75)
+mf <- tcm(X, time.table = time.table, control = list(optimization.method = 'stochastic', batch.size = 2000, mc.cores = 4))
 ```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/dm_sim.png)
 
-This example clearly demonstrates TCM has significantly better capability of revealing the hidden lineages from very heterogenous temporal scRNA-seq datasets than traditional dimension reduction methods such as t-SNE and diffusion map. 
+Visualization of the dimension reduction results:
+```r
+col.lineage <- rainbow(5)
+bg.cell <- col.lineage[colData(sim)$lineage]
+plot(mf, pch = 21, bg = bg.cell, cex = 0.5)
+legend(par('usr')[2], par('usr')[4], 1:5, bty = 'n', xpd = NA, pt.bg = col.lineage, pch = 21, col = 'black', cex = 1.75)
+```
+![alt text](/docs/images/dm_sim_large.png)
+
 
 # 3. Case studies
 
