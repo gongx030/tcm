@@ -96,7 +96,7 @@ bg.cell <- col.lineage[colData(sim)$lineage]
 plot(mf, pch = 21, bg = bg.cell, cex = 0.5)
 legend(par('usr')[2], par('usr')[4], 1:5, bty = 'n', xpd = NA, pt.bg = col.lineage, pch = 21, col = 'black', cex = 1.75)
 ```
-![alt text](/docs/images/dm_sim_large.png)
+![alt text](/docs/images/tcm_sim_large.png)
 
 
 # 3. Case studies
