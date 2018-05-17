@@ -101,7 +101,7 @@ legend(par('usr')[2], par('usr')[4], 1:5, bty = 'n', xpd = NA, pt.bg = col.linea
 
 # 3. Case studies
 
-## 3.1 Guo(2015), single cell PCR of early mouse embryonic development
+## 3.1 Single cell PCR of early mouse embryonic development (Guo et al.)
 
 ```r
 library(scDatasets)
@@ -120,7 +120,7 @@ plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 ```
 ![alt text](/docs/images/tcm_guo.png)
 
-## 3.2 Single cell RNA-seq of the development of human primordial germ cells (PGC) and neighboring somatic cells from weeks 4 to 19 post-gestation. 
+## 3.2 Single cell RNA-seq of the development of human primordial germ cells (PGC) and neighboring somatic cells from weeks 4 to 19 post-gestation (Guo et al.)
 ```r
 library(scDatasets)
 data(guo2)
@@ -141,7 +141,7 @@ plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 ```
 ![alt text](/docs/images/tcm_guo2.png)
 
-## 3.3 Single cell RNA-seq of hESC derived mesodermal lineages
+## 3.3 Single cell RNA-seq of hESC derived mesodermal lineages (Loh et al.)
 ```r
 library(scDatasets)
 data(loh)
@@ -171,89 +171,35 @@ plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 ```
 ![alt text](/docs/images/tcm_loh.png)
 
-## 3.2 Single cell RNA-seq of iPSC-CM differentiation
-```r
-library(scDatasets)
-data(iPSC_CM)
-X <- preprocess2(assay(iPSC_CM), max.expressed.ratio = 1, min.expressed.gene = 0, min.expressed.cell = 2, normalize.by.size.effect = FALSE)
-set.seed(1)
-time.table <- colData(guo)[['time.table']]
-mf <- tcm(X, K = 15, time = time.table, n.circle = 10, n.metacell = 15, n.prev = 2, remove.first.pc = TRUE, max.iter = 200)
 
-cg <- factor(colnames(mf$V), c('D0', 'D6', 'D10', 'D30', 'D60'))
-col.cg <- rainbow(nlevels(cg))
-names(col.cg) <- levels(cg)
-bg.cell <- col.cg[as.numeric(cg)]
-
-dev.new(height = 10, width = 12)
-par(mar = c(5, 5, 5, 15))
-plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
-legend(par('usr')[2], par('usr')[4], levels(cg), bty = 'n', xpd = NA, pt.bg = col.cg, pch = 21, col = 'black')
-```
-![alt text](/docs/images/tcm_iPSC.png)
-
-### Investigate the expression pattern of marker genes during iPSC-CM differentiation:
-
-TNNT2 (cardiomyocyte marker)
-```r
-dev.new(height = 10, width = 12)
-par(mar = c(5, 5, 5, 15))
-plot(mf, pch = 21, bg = num2color(log(X['TNNT2', ] + 1)), cex = 2.25, main = 'TNNT2')
-```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/iPSC_TNNT2.png)
-
-CDH11 (cardiofibroblast marker)
-```r
-dev.new(height = 10, width = 12)
-par(mar = c(5, 5, 5, 15))
-plot(mf, pch = 21, bg = num2color(log(X['CDH11', ] + 1)), cex = 2.25, main = 'CDH11')
-```
-![alt text](/docs/images/iPSC_CDH11.png)
-
-
-
-## 3.4 Single cell RNA-seq of human myoblast differentiation
+## 3.4 Single cell RNA-seq of human myoblast differentiation (Trapnell et al.)
 ```r
 library(scDatasets)
 data(trapnell)
-X <- preprocess2(assay(trapnell), max.expressed.ratio = 1, min.expressed.gene = 0, min.expressed.cell = 2, normalize.by.size.effect = FALSE)
-set.seed(1)
-time.table <- colData(trapnell)[['time.table']]
-mf <- tcm(X, K = 10, time = time.table, n.circle = 10, n.metacell = 15, n.prev = 3, remove.first.pc = TRUE, max.iter = 200)
-
+X <- assays(trapnell)$count
+time.table <- colData(trapnell)$time.table
+X <- preprocess(X, min.expressed.gene = 0)
 cg <- colData(trapnell)[['time']]
 col.cg <- rainbow(nlevels(cg))
 names(col.cg) <- levels(cg)
 bg.cell <- col.cg[as.numeric(cg)]
-dev.new(height = 10, width = 12)
-par(mar = c(5, 5, 5, 15))
+set.seed(1)
+ls <- landscape(type = 'temporal.convolving', time.points = ncol(time.table), K = 15, n.prototype = 15, n.circle = 10, n.prev = 2)
+mf <- tcm(X, time.table = time.table, ls = ls)
 plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
-legend(par('usr')[2], par('usr')[4], levels(cg), bty = 'n', xpd = NA, pt.bg = col.cg, pch = 21, col = 'black')
 ```
+![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/tcm_trapnell.png)
 
-TNNT2 (cardiac marker)
+Visualizaion of expression levels of some key genes:
 ```r
-dev.new(height = 10, width = 12)
-par(mar = c(5, 5, 5, 15))
-plot(mf, pch = 21, bg = num2color(log(X['ENSG00000118194', ] + 1)), cex = 2.25, main = 'TNNT2')
+par(mfrow = c(2, 2))
+par(mar = c(2, 2, 2, 2))
+plot(mf, pch = 21, bg = num2color(log(X['ENSG00000118194', ] + 1)), cex = 1.25, main = 'TNNT2')
+plot(mf, pch = 21, bg = num2color(log(X['ENSG00000134853', ] + 1)), cex = 1.25, main = 'PDGFRA')
+plot(mf, pch = 21, bg = num2color(log(X['ENSG00000125414', ] + 1)), cex = 1.25, main = 'MYH2')
+plot(mf, pch = 21, bg = num2color(log(X['ENSG00000115461', ] + 1)), cex = 1.25, main = 'IGFBP5')
 ```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/Trapnell_TNNT2.png)
-
-PDGFRA (MC marker)
-```r
-dev.new(height = 10, width = 12)
-par(mar = c(5, 5, 5, 15))
-plot(mf, pch = 21, bg = num2color(log(X['ENSG00000134853', ] + 1)), cex = 2.25, main = 'PDGFRA')
-```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/Trapnell_PDGFRA.png)
-
-IGFBP5 (skeletal marker)
-```r
-dev.new(height = 10, width = 12)
-par(mar = c(5, 5, 5, 15))
-plot(mf, pch = 21, bg = num2color(log(X['ENSG00000115461', ] + 1)), cex = 2.25, main = 'IGFBP5')
-```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/Trapnell_IGFBP5.png)
+![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/tcm_trapnell_expression.png)
 
 
 # 4. Session Information
