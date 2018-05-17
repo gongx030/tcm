@@ -106,19 +106,19 @@ legend(par('usr')[2], par('usr')[4], 1:5, bty = 'n', xpd = NA, pt.bg = col.linea
 ```r
 library(scDatasets)
 data(guo)
-X <- preprocess2(assay(guo), max.expressed.ratio = 1, min.expressed.gene = 0, min.expressed.cell = 2)
-set.seed(1)
-time.table <- colData(guo)[['time.table']]
-mf <- tcm(X, K = 10, time = time.table, n.circle = 10, n.metacell = 15, n.prev = 3, max.iter = 50)
+X <- assays(guo)$count
+time.table <- colData(guo)$time.table
+X <- preprocess(X)
+
+set.seed(1) 
+mf <- tcm(X, time.table = time.table)
 cg <- factor(colnames(time.table)[max.col(time.table)], colnames(time.table))
 col.cg <- rainbow(nlevels(cg))
 names(col.cg) <- levels(cg)
 bg.cell <- col.cg[as.numeric(cg)]
-dev.new(height = 10, width = 12)
-par(mar = c(5, 5, 5, 15))
 plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 ```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/tcm_Guo.png)
+![alt text](/docs/images/tcm_guo.png)
 
 ## 3.2 Single cell RNA-seq of iPSC-CM differentiation
 ```r
@@ -139,7 +139,7 @@ par(mar = c(5, 5, 5, 15))
 plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 legend(par('usr')[2], par('usr')[4], levels(cg), bty = 'n', xpd = NA, pt.bg = col.cg, pch = 21, col = 'black')
 ```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/tcm_iPSC.png)
+![alt text](/docs/images/tcm_iPSC.png)
 
 ### Investigate the expression pattern of marker genes during iPSC-CM differentiation:
 
@@ -157,7 +157,7 @@ dev.new(height = 10, width = 12)
 par(mar = c(5, 5, 5, 15))
 plot(mf, pch = 21, bg = num2color(log(X['CDH11', ] + 1)), cex = 2.25, main = 'CDH11')
 ```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/iPSC_CDH11.png)
+![alt text](/docs/images/iPSC_CDH11.png)
 
 ## 3.3 Single cell RNA-seq of hESC derived mesodermal lineages
 ```r
@@ -237,10 +237,9 @@ plot(mf, pch = 21, bg = num2color(log(X['ENSG00000115461', ] + 1)), cex = 2.25, 
 ```r
 library(scDatasets)
 data(guo2)
-X <- preprocess2(assay(guo2), max.expressed.ratio = 1, min.expressed.gene = 0, min.expressed.cell = 2, normalize.by.size.effect = FALSE)
-set.seed(1)
-time.table <- colData(guo2)[['time.table']]
-mf <- tcm(X, K = 15, time = time.table, n.circle = 10, n.metacell = 15, n.prev = 3, remove.first.pc = TRUE, max.iter = 200)
+X <- assays(guo2)$count
+X <- preprocess(X)
+time.table <- colData(guo2)$time.table
 
 cg <- factor(colData(guo2)[['source.name']])
 col.cg <- rainbow(nlevels(cg))
@@ -248,34 +247,37 @@ names(col.cg) <- levels(cg)
 bg.cell <- col.cg[as.numeric(cg)]
 bg.cell[colData(guo2)[['developmental.stage']] == '17 week gestation' & colData(guo2)[['gender']] == 'female' & colData(guo2)[['source.name']] == 'Primordial Germ Cells'] <- 'gold'
 bg.cell[colData(guo2)[['developmental.stage']] == '19 week gestation' & colData(guo2)[['gender']] == 'male' & colData(guo2)[['source.name']] == 'Primordial Germ Cells'] <- 'purple'
-ab2pch <- c('male' = 21, 'female' = 22)
-pch.cell <- lab2pch[colData(guo2)[['gender']]]
 
-dev.new(height = 10, width = 12)
-par(mar = c(5, 5, 5, 15))
+set.seed(1)
+mf <- tcm(X, time.table = time.table)
 plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
-legend(par('usr')[2], par('usr')[4], levels(cg), bty = 'n', xpd = NA, pt.bg = col.cg, pch = 21, col = 'black')
 ```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/tcm_Guo2.png)
+![alt text](/docs/images/tcm_guo2.png)
 
 
 # 4. Session Information
 ```r
 > sessionInfo()
-R version 3.3.3 (2017-03-06)
+R version 3.4.3 (2017-11-30)
 Platform: x86_64-pc-linux-gnu (64-bit)
 Running under: CentOS release 6.9 (Final)
 
+Matrix products: default
+BLAS: /panfs/roc/msisoft/R/3.4.3/lib64/R/lib/libRblas.so
+LAPACK: /panfs/roc/msisoft/R/3.4.3/lib64/R/lib/libRlapack.so
+
 locale:
-[1] C
+ [1] LC_CTYPE=en_US.UTF-8       LC_NUMERIC=C               LC_TIME=en_US.UTF-8        LC_COLLATE=en_US.UTF-8     LC_MONETARY=en_US.UTF-8    LC_MESSAGES=en_US.UTF-8    LC_PAPER=en_US.UTF-8       LC_NAME=C                  LC_ADDRESS=C               LC_TELEPHONE=C             LC_MEASUREMENT=en_US.UTF-8 LC_IDENTIFICATION=C
 
 attached base packages:
-[1] stats     graphics  grDevices datasets  utils     methods   base
+ [1] grid      parallel  stats4    stats     graphics  grDevices datasets  utils     methods   base
 
 other attached packages:
-[1] tcm_1.0.2            BiocInstaller_1.24.0
+ [1] scDatasets_0.0.3           wordcloud_2.5              RColorBrewer_1.1-2         plotrix_3.7                gplots_3.0.1               igraph_1.2.1               MASS_7.3-47                cluster_2.0.6              FNN_1.1                    gtools_3.5.0               fields_9.6                 maps_3.2.0
+[13] spam_2.1-2                 dotCall64_0.9-5.2          irlba_2.3.2                Matrix_1.2-12              SummarizedExperiment_1.8.1 DelayedArray_0.4.1         matrixStats_0.53.1         Biobase_2.38.0             GenomicRanges_1.30.3       GenomeInfoDb_1.14.0        IRanges_2.12.0             S4Vectors_0.16.0
+[25] BiocGenerics_0.24.0        BiocInstaller_1.28.0
 
 loaded via a namespace (and not attached):
- [1] lattice_0.20-35    FNN_1.1            gtools_3.5.0       bitops_1.0-6       MASS_7.3-47        grid_3.3.3         magrittr_1.5       spam_2.1-1         KernSmooth_2.23-15 gplots_3.0.1       irlba_2.3.1        gdata_2.18.0       Matrix_1.2-11      igraph_1.1.2       maps_3.2.0         fields_9.0
-[17] plotrix_3.6-6      pkgconfig_2.0.1    cluster_2.0.6      caTools_1.17.1     dotCall64_0.9-04
+ [1] Rcpp_0.12.16           compiler_3.4.3         XVector_0.18.0         bitops_1.0-6           tools_3.4.3            zlibbioc_1.24.0        digest_0.6.15          memoise_1.1.0          lattice_0.20-35        pkgconfig_2.0.1        commonmark_1.4         GenomeInfoDbData_1.0.0 withr_2.1.2            stringr_1.3.0
+[15] roxygen2_6.0.1         xml2_1.2.0             caTools_1.17.1         devtools_1.13.5        R6_2.2.2               gdata_2.18.0           magrittr_1.5           KernSmooth_2.23-15     stringi_1.1.7          RCurl_1.95-4.10        slam_0.1-42
 ```
