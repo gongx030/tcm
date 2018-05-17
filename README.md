@@ -141,7 +141,35 @@ plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 ```
 ![alt text](/docs/images/tcm_guo2.png)
 
+## 3.3 Single cell RNA-seq of hESC derived mesodermal lineages
+```r
+library(scDatasets)
+data(loh)
+X <- assays(loh)$count
+time.table <- colData(loh)$time.table
+X <- preprocess(X)
 
+# assign cell color
+cn <- colData(loh)[['sample_alias']]  
+lab2name <- c(
+  'H7hESC' = 'hESC(D0)',
+  'H7_derived_APS' = 'Anterior PS(D1)',
+  'H7_derived_DLL1pPXM' = 'Paraxial Mesoderm(D2)',
+  'H7_dreived_D2.25_Smtmrs' = 'Somitomeres(D2.25)',
+  'H7_derived_ESMT' = 'Early Somite(D3)',
+  'H7_derived_MPS' = 'Mid PS(D1)',
+  'H7_derived_D2LtM' = 'Lateral Mesoderm(D2)',
+  'H7_derived_D3GARPpCrdcM' = 'Cardiac Mesoderm(D3-D4)'
+)
+cg <- factor(cn, names(lab2name), lab2name)
+col.cg <- rainbow(nlevels(cg))
+names(col.cg) <- levels(cg)
+bg.cell <- col.cg[as.numeric(cg)]
+
+mf <- tcm(X, time.table = time.table)
+plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
+```
+![alt text](/docs/images/tcm_loh.png)
 
 ## 3.2 Single cell RNA-seq of iPSC-CM differentiation
 ```r
@@ -182,36 +210,7 @@ plot(mf, pch = 21, bg = num2color(log(X['CDH11', ] + 1)), cex = 2.25, main = 'CD
 ```
 ![alt text](/docs/images/iPSC_CDH11.png)
 
-## 3.3 Single cell RNA-seq of hESC derived mesodermal lineages
-```r
-library(scDatasets)
-data(loh)
-X <- preprocess2(assay(loh), max.expressed.ratio = 1, min.expressed.gene = 0, min.expressed.cell = 2, normalize.by.size.effect = FALSE)
-set.seed(1)
-time.table <- colData(loh)[['time.table']]
-mf <- tcm(X, K = 10, time = time.table, n.circle = 10, n.metacell = 15, n.prev = 3, remove.first.pc = TRUE, max.iter = 50)
 
-cn <- colData(loh)[['sample_alias']]  # cell names
-lab2name <- c(
-  'H7hESC' = 'hESC(D0)',
-  'H7_derived_APS' = 'Anterior PS(D1)',
-  'H7_derived_DLL1pPXM' = 'Paraxial Mesoderm(D2)',
-  'H7_dreived_D2.25_Smtmrs' = 'Somitomeres(D2.25)',
-  'H7_derived_ESMT' = 'Early Somite(D3)',
-  'H7_derived_MPS' = 'Mid PS(D1)',
-  'H7_derived_D2LtM' = 'Lateral Mesoderm(D2)',
-  'H7_derived_D3GARPpCrdcM' = 'Cardiac Mesoderm(D3-D4)'
-)
-cg <- factor(cn, names(lab2name), lab2name)
-col.cg <- rainbow(nlevels(cg))
-names(col.cg) <- levels(cg)
-bg.cell <- col.cg[as.numeric(cg)]
-dev.new(height = 10, width = 12)
-par(mar = c(5, 5, 5, 15))
-plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
-legend(par('usr')[2], par('usr')[4], levels(cg), bty = 'n', xpd = NA, pt.bg = col.cg, pch = 21, col = 'black')
-```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/tcm_Loh.png)
 
 ## 3.4 Single cell RNA-seq of human myoblast differentiation
 ```r
