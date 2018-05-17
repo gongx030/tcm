@@ -2,37 +2,32 @@
 % Please edit documentation in R/tcm.r
 \name{sim.rnaseq.ts}
 \alias{sim.rnaseq.ts}
-\title{Simulating time series single cell RNA-seq data}
+\title{sim.rnaseq.ts}
 \usage{
-sim.rnaseq.ts(N = 200, M = 50, K = 20, n.circle = 100,
-  n.metacell = 10, lambda = 0.25, alpha0 = 0.1, library.size = c(1000,
-  1e+05), n.neighbors = 7, n.lineage = 3, choose.leaves = "random",
-  type = "sequential", n.time.points = 10)
+sim.rnaseq.ts(N = 2000, M = 500, ls, lambda.dropout = 0.25,
+  alpha0 = 0.1, library.size = c(1000, 1e+05), n.lineage = 5,
+  type = "sequential", n.time.points = 5, ...)
 }
 \arguments{
 \item{N}{number of genes}
 
 \item{M}{number of cells}
 
-\item{K}{number of metagenes}
+\item{ls}{the prototype landscape (default: a "plate" with 100 circles and the number of prototypes per circle of 10)}
 
-\item{n.circle}{number of circles on the latent space}
+\item{alpha0}{the argument for a Dirichlet distribution for sampling metagene basis (default: 0.1)}
 
-\item{lambda}{the argument of a exponential decay model for introducing the dropout noise}
+\item{library.size}{total number of reads per cell (default: c(1e3, 1e5))}
 
-\item{alpha0}{the argument for a Dirichlet distribution for sampling metagene basis}
+\item{n.lineage}{number of simulated lineages (default: 5)}
 
-\item{library.size}{total number of reads per cell}
+\item{type}{the type of differentiation models (default: 'sequential')}
 
-\item{n.neighbors}{number of neighbors when looking for nearby prototypes}
+\item{n.time.points}{the number of simulated time points (default: 5)}
 
-\item{n.lineage}{number of simulated lineages}
+\item{...}{additional arguments}
 
-\item{type}{the type of differentiation models}
-
-\item{n.time.points}{the number of simulated time points}
-
-\item{n.circle}{prototypes per circle on the latent space}
+\item{lambda}{the argument of a exponential decay model for introducing the dropout noise (default: 0.25)}
 }
 \value{
 A SummarizedExperiment object of simulated temporal scRNA-seq data
@@ -41,9 +36,14 @@ A SummarizedExperiment object of simulated temporal scRNA-seq data
 Simulating time series single cell RNA-seq data
 }
 \examples{
-set.seed(1)
-sim <- sim.rnaseq.ts(N = 2000, M = 500, n.lineage = 5, type = 'sequential', n.time.points = 5)
+# simulate a simple temporal scRNA-seq data with 2,000 genes, 500 cells and five different lineages.  
+# The single cell data are sampled across five time points following a sequentail differentiation model. 
+set.seed(122)
+sim <- sim.rnaseq.ts(N = 2000, M = 500, n.lineage = 5, n.time.points = 5)
 
+}
+\seealso{
+\code{\link{landscape}}
 }
 \author{
 Wuming Gong, \email{gongx030@umn.edu}

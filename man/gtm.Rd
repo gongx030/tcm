@@ -2,12 +2,11 @@
 % Please edit documentation in R/tcm.r
 \name{gtm}
 \alias{gtm}
-\title{The generative topograhic map}
+\title{gtm}
 \usage{
-gtm(V, Theta = NULL, L.scaffold = NULL, L.metacell = NULL, C = NULL,
-  S = NULL, W = NULL, beta = 1, update.beta = TRUE, Alpha0 = 0.001,
-  max.iter = 50, verbose = TRUE)
+gtm(V = NULL, landscape = NULL, CT = NULL, method = NULL,
+  update.beta = TRUE, control = NULL)
 }
 \description{
-The generative topograhic map
+Update the prototype landscape
 }

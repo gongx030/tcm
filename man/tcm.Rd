@@ -2,26 +2,21 @@
 % Please edit documentation in R/tcm.r
 \name{tcm}
 \alias{tcm}
-\title{Visualizing temporal scRNA-seq by topographic cell map}
+\title{tcm}
 \usage{
-tcm(X, K = 10, time.table = NULL, n.circle = 10, n.metacell = 15,
-  n.prev = 3, lambda = 1, remove.first.pc = FALSE, update.beta = TRUE,
-  max.iter.ctm = NA, max.iter = 100, verbose = TRUE)
+tcm(X, time.table, ls, init = NULL, control = NULL)
 }
 \arguments{
-\item{X}{a normalized read count matrix where each row represents a gene and each column represents a cell}
-
-\item{K}{the number of metagenes}
+\item{X}{a read count matrix where each row represents a gene and each column represents a cell}
 
 \item{time.table}{a cell by time point table indicating the source of each cell}
 
-\item{n.circle}{prototypes per layer (S)}
+\item{ls}{the prototype landscape for TCM 
+(default: landscape(type = 'temporal.convolving', time.points = ncol(CT), K = 15, n.prototype = 15, n.circle = 10, n.prev = 3))}
 
-\item{n.metacell}{the number of layers (R)}
+\item{init:}{initialization parameters}
 
-\item{n.prev}{the number of layers of convolving prototypes (R - rho)}
-
-\item{remove.first.pc}{whether or not removing the first principal component}
+\item{control:}{control parameters}
 }
 \value{
 a tcm object
@@ -30,17 +25,21 @@ a tcm object
 Visualizing temporal scRNA-seq by topographic cell map
 }
 \examples{
-set.seed(1)
-sim <- sim.rnaseq.ts(N = 2000, M = 500, n.lineage = 5, type = 'sequential', n.time.points = 5)
-bg.lineage <- rainbow(sim$n.lineage)
-bg.cell <- bg.lineage[sim$lineage]
-time.table <- table(1:sim$M, factor(sim$time))
-set.seed(1)
-mf <- tcm(sim$X, time = time.table, n.circle = 10, n.metacell = 15, n.prev = 3, max.iter = 10)
-set.seed(1)
+
+library(tcm)
+
+# simulate a simple temporal scRNA-seq data with 2,000 genes, 500 cells and five different lineages.  
+# The single cell data are sampled across five time points following a sequentail differentiation model. 
+set.seed(122)
+sim <- sim.rnaseq.ts(N = 2000, M = 500, n.lineage = 5, n.time.points = 5)
+X <- assays(sim)$count
+time.table <- colData(sim)$time.table
+mf <- tcm(X, time.table = time.table)
+bg.cell <- rainbow(5)[colData(sim)$lineage]
 dev.new(height = 10, width = 12)
 par(mar = c(5, 5, 5, 15))
-plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
+plot(mf, pch = 21, bg = bg.cell, cex = 1.5)
+
 legend(par('usr')[2], par('usr')[4], 1:sim$n.lineage, bty = 'n', xpd = NA, pt.bg = bg.lineage, pch = 21, col = 'black', cex = 1.75)
 
 }

@@ -4,19 +4,21 @@
 \alias{tcm.core}
 \title{The core function for optimizaing TCM}
 \usage{
-tcm.core(X, U = NULL, V = NULL, Theta = NULL, L.scaffold = NULL,
-  L.metacell = NULL, C = NULL, S = NULL, W = NULL, beta = 1,
-  update.beta = TRUE, c0 = 0.001, d0 = 0.001, Alpha0 = 0.001,
-  max.iter = 100, verbose = TRUE)
+tcm.core(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NULL,
+  mem = NULL, c0 = 0.001, d0 = 0.001, control = NULL)
 }
 \arguments{
-\item{L.scaffold}{Precision matrix defined for the scaffold}
+\item{S}{a column stochastic matrix (colSums(S) == 1).  describing the relationship between free and convolving prototypes}
 
-\item{L.metacell}{Precision matrix defined for the metacells}
+\item{L}{Precision matrix defined for the prototypes}
 
-\item{S}{a column stochastic matrix (colSums(S) == 1).  describing the relationship between scaffold and metacells.}
+\item{optimization.method}{optimization method for TCM, either 'batch' or 'stochastic'}
 
-\item{W}{a binary matrix indicating the restricted area of cells on the metacell landscape; if W is NULL, any cells can be mapped to any metacells on the metacell landscape}
+\item{batch.size}{size of mini batch}
+
+\item{mc.cores}{number of CPU cores (default: 1)}
+
+\item{max.size.per.batch}{maximum samples per batch}
 }
 \description{
 The core function for optimizaing TCM

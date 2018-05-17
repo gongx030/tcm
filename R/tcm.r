@@ -10,86 +10,93 @@ library(gplots)	# colorpanel
 library(plotrix)	# draw.circle
 library(SummarizedExperiment) 	
 library(parallel) # mclapply
-library(wordcloud)	# textplot
 
+
+#' add.paths
+#'
+#' A generic function for adding developmental trajectory onto the 
+#' the prototype landscape
+#'
+#' @param x a tcm object
+#' @param ... additional arguments
+#'
+#' @export
+#'
+#' @author Wuming Gong, \email{gongx030@umn.edu}
+#'
 add.paths <- function(x, ...) UseMethod('add.paths', x)
 
 
+#' sim.rnaseq.ts
+#'
 #' Simulating time series single cell RNA-seq data
 #' 
 #' @param N number of genes
 #' @param M number of cells
-#' @param K number of metagenes
-#' @param n.circle number of circles on the latent space
-#' @param n.circle prototypes per circle on the latent space
-#' @param lambda the argument of a exponential decay model for introducing the dropout noise
-#' @param alpha0 the argument for a Dirichlet distribution for sampling metagene basis
-#' @param library.size total number of reads per cell
-#' @param n.neighbors number of neighbors when looking for nearby prototypes
-#' @param n.lineage number of simulated lineages
-#' @param type the type of differentiation models
-#' @param n.time.points the number of simulated time points
+#' @param ls the prototype landscape (default: a "plate" with 100 circles and the number of prototypes per circle of 10)
+#' @param lambda the argument of a exponential decay model for introducing the dropout noise (default: 0.25)
+#' @param alpha0 the argument for a Dirichlet distribution for sampling metagene basis (default: 0.1)
+#' @param library.size total number of reads per cell (default: c(1e3, 1e5))
+#' @param n.lineage number of simulated lineages (default: 5)
+#' @param type the type of differentiation models (default: 'sequential')
+#' @param n.time.points the number of simulated time points (default: 5)
+#' @param ... additional arguments
 #' 
 #' @return A SummarizedExperiment object of simulated temporal scRNA-seq data
+#'
+#' @export
+#'
+#' @seealso \code{\link{landscape}}
 #'
 #' @author Wuming Gong, \email{gongx030@umn.edu}
 #' 
 #' @examples
-#' set.seed(1)
-#' sim <- sim.rnaseq.ts(N = 2000, M = 500, n.lineage = 5, type = 'sequential', n.time.points = 5)
-#' 
-#' @export
+#' # simulate a simple temporal scRNA-seq data with 2,000 genes, 500 cells and five different lineages.  
+#' # The single cell data are sampled across five time points following a sequentail differentiation model. 
+#' set.seed(122)
+#' sim <- sim.rnaseq.ts(N = 2000, M = 500, n.lineage = 5, n.time.points = 5)
 #'
-#' @importFrom fields rdist
-#' @importFrom irlba irlba
-#' @importFrom gtools ddirichlet rdirichlet
-#' @importFrom cluster pam
-#' @importFrom FNN knnx.index
-#' @importFrom MASS mvrnorm
-#' @import Matrix
-#' @importFrom graphics plot points
-#' @importFrom stats as.dist cmdscale rbinom rmultinom rnorm runif
-#' @importFrom igraph get.shortest.paths graph.adjacency
-#' @importFrom gplots colorpanel
-#' @importFrom plotrix draw.circle
-#' 
-sim.rnaseq.ts <- function(N = 200, M = 50, landscape = NULL, lambda.dropout = 0.5, alpha0 = 0.1, library.size = c(1e3, 1e5), n.lineage = 3, type = 'sequential', n.time.points = 10, ...){
+sim.rnaseq.ts <- function(N = 2000, M = 500, ls, lambda.dropout = 0.25, alpha0 = 0.1, library.size = c(1e3, 1e5), n.lineage = 5, type = 'sequential', n.time.points = 5, ...){
 
 	param <- list(...)
 
+	if (missing(ls)){
+		ls <- landscape(type = 'plate', K = 15, n.prototype = 10, n.circle = 100)
+	}
+
 	# selecting the leave prototypes
-	border.prototypes <- which(landscape$MC[, landscape$n.circle])	# the prototypes at the outer region
+	border.prototypes <- which(ls$MC[, ls$n.circle])	# the prototypes at the outer region
 	leaves <- round(seq(min(border.prototypes), max(border.prototypes), length.out = n.lineage + 1))[-1]
 
 	# find the shortest paths from the origin to the leaves
-	landscape$paths <- lapply(leaves, function(leaf) as.vector(get.shortest.paths(landscape$graph, from = 1, to = leaf)$vpath[[1]]))
+	ls$paths <- lapply(leaves, function(leaf) as.vector(get.shortest.paths(ls$graph, from = 1, to = leaf)$vpath[[1]]))
 
 	# a matrix for the active prototypes for each leave
-	LN <- sparseMatrix(i =  unlist(landscape$paths), j = rep(1:n.lineage, sapply(landscape$paths, length)), dims = c(landscape$H.prototype, n.lineage))
-	landscape$is.active <- Matrix::rowSums(LN) > 0
+	LN <- sparseMatrix(i =  unlist(ls$paths), j = rep(1:n.lineage, sapply(ls$paths, length)), dims = c(ls$H.prototype, n.lineage))
+	ls$is.active <- Matrix::rowSums(LN) > 0
 
 	if (type == 'sequential'){
-		starts <- round(seq(1, landscape$n.circle, length.out = n.time.points + 1))[-(n.time.points + 1)]	# start of time interval
-		ends <- c(starts[-1] - 1, landscape$n.circle)
-		P <- do.call('cbind', lapply(1:n.time.points, function(i) 1:landscape$n.circle >= starts[i] & 1:landscape$n.circle <= ends[i]))	# n.circle ~ n.time.points
+		starts <- round(seq(1, ls$n.circle, length.out = n.time.points + 1))[-(n.time.points + 1)]	# start of time interval
+		ends <- c(starts[-1] - 1, ls$n.circle)
+		P <- do.call('cbind', lapply(1:n.time.points, function(i) 1:ls$n.circle >= starts[i] & 1:ls$n.circle <= ends[i]))	# n.circle ~ n.time.points
 		P <- as.matrix(P %*% Diagonal(x = 1 / Matrix::colSums(P))) # column stochastic matrix of the distribution of time points on each circle
 	}else if (type == 'delayed'){
 		starts <- rep(1, n.time.points)
-		ends <- round(seq(1, landscape$n.circle, length.out = n.time.points + 1))[-1]
-		P <- do.call('cbind', lapply(1:n.time.points, function(i) 1:landscape$n.circle >= starts[i] & 1:landscape$n.circle <= ends[i]))	# n.circle ~ n.time.points
+		ends <- round(seq(1, ls$n.circle, length.out = n.time.points + 1))[-1]
+		P <- do.call('cbind', lapply(1:n.time.points, function(i) 1:ls$n.circle >= starts[i] & 1:ls$n.circle <= ends[i]))	# n.circle ~ n.time.points
 		P <- as.matrix(P %*% Diagonal(x = 1 / Matrix::colSums(P))) # column stochastic matrix of the distribution of time points on each circle
 	}else if (type == 'forward'){
-		starts <- round(seq(1, landscape$n.circle, length.out = n.time.points + 1))[-(n.time.points + 1)]	# start of time interval
-		ends <- rep(landscape$n.circle, n.time.points)
-		P <- do.call('cbind', lapply(1:n.time.points, function(i) 1:landscape$n.circle >= starts[i] & 1:landscape$n.circle <= ends[i]))	# n.circle ~ n.time.points
+		starts <- round(seq(1, ls$n.circle, length.out = n.time.points + 1))[-(n.time.points + 1)]	# start of time interval
+		ends <- rep(ls$n.circle, n.time.points)
+		P <- do.call('cbind', lapply(1:n.time.points, function(i) 1:ls$n.circle >= starts[i] & 1:ls$n.circle <= ends[i]))	# n.circle ~ n.time.points
 		P <- as.matrix(P %*% Diagonal(x = 1 / Matrix::colSums(P))) # column stochastic matrix of the distribution of time points on each circle
 	}else if (type == 'uniform'){
-		P <- matrix(1 / landscape$n.circle, landscape$n.circle, n.time.points)
+		P <- matrix(1 / ls$n.circle, ls$n.circle, n.time.points)
 	}else if (type == 'mixed'){
 		P <- do.call('cbind', lapply(1:n.time.points, function(i){
 			a <- runif(1, min = 0, max = 5)
 			b <- runif(1, min = 0, max = 5)
-			breaks <- seq(0, 1, length.out = landscape$n.circle + 1)
+			breaks <- seq(0, 1, length.out = ls$n.circle + 1)
 			breaks[1] <- breaks[1] - 1
 			breaks[length(breaks)] <- breaks[length(breaks)] + 1
 			table(cut(rbeta(10000, a, b), breaks = breaks)) / 10000
@@ -97,7 +104,7 @@ sim.rnaseq.ts <- function(N = 200, M = 50, landscape = NULL, lambda.dropout = 0.
 	}else
 		stop(sprintf('unknown type: %s', type))
 
-	GBP <- as.matrix(landscape$MC %*% P) / landscape$n.prototype	# metacell ~ time, column stochastic matrix of sampling probability
+	GBP <- as.matrix(ls$MC %*% P) / ls$n.prototype	# metacell ~ time, column stochastic matrix of sampling probability
 
 	z <- rep(NA, M)				# metacell assignment for each cell
 	lineage <- rep(NA, M)	# lineage assignment for each cell
@@ -108,10 +115,10 @@ sim.rnaseq.ts <- function(N = 200, M = 50, landscape = NULL, lambda.dropout = 0.
 		# randomly sample a prototype along current lineage path, according to the probability of time labels on the path
 		z[m] <- sample(which(LN[, lineage[m]]), 1, prob = GBP[LN[, lineage[m]], time[m]])
 	}
-	V <- as.matrix(landscape$Theta.free %*% landscape$S[, z])	# metacell coefficient for each cell
+	V <- as.matrix(ls$Theta.free %*% ls$S[, z])	# metacell coefficient for each cell
 	V.exp <- exp(V) %*% diag(1 / colSums(exp(V)))
 	libsize <- runif(M, library.size[1], library.size[2])	# sampling the library size for each cell
-	U <- t(rdirichlet(landscape$K, alpha = rep(alpha0, N)))	# sampling the metagene basis
+	U <- t(rdirichlet(ls$K, alpha = rep(alpha0, N)))	# sampling the metagene basis
 	Mu <- do.call('cbind', lapply(1:M, function(m) rmultinom(1, libsize[m], prob = U %*% V.exp[, m, drop = FALSE])))	# sampling the number of reads
 	prob <- exp(-lambda.dropout * log(Mu + 1))	# introduce the dropout noise by a exponential decay model
 	D <- matrix(rbinom(N * M, 1, prob), nrow = N, ncol = M) == 1
@@ -122,62 +129,82 @@ sim.rnaseq.ts <- function(N = 200, M = 50, landscape = NULL, lambda.dropout = 0.
 	SummarizedExperiment(
 		assays = list(count = X, Mu = as.matrix(Mu), D = D), 
 		rowData = DataFrame(U = I(U)),
-		colData = DataFrame(V = I(t(V)), z = z, lineage = lineage, circle = max.col(landscape$MC)[z], time = I(time), time.table = I(table(1:M, factor(time)))),
-		metadata = list(N = N, M = M, landscape = landscape, n.lineage = n.lineage, lambda.dropout = lambda.dropout, type = type, n.time.points = n.time.points, P = P)
+		colData = DataFrame(V = I(t(V)), z = z, lineage = lineage, circle = max.col(ls$MC)[z], time = I(time), time.table = I(table(1:M, factor(time)))),
+		metadata = list(N = N, M = M, landscape = ls, n.lineage = n.lineage, lambda.dropout = lambda.dropout, type = type, n.time.points = n.time.points, P = P)
 	)
 
 } # end of sim.rnaseq.ts
 
 
+#' tcm
+#' 
 #' Visualizing temporal scRNA-seq by topographic cell map 
 #' 
-#' @param X a normalized read count matrix where each row represents a gene and each column represents a cell
-#' @param K the number of metagenes
+#' @param X a read count matrix where each row represents a gene and each column represents a cell
 #' @param time.table a cell by time point table indicating the source of each cell
-#' @param landscape the prototype landscape for TCM. The landscape need to be initialized by init.landscape(). 
-#' @param optimization.method the method for optimizing TCM, either 'batch' or 'stochastic' (default: stochastic)
-#' @param batch.size the size of randomly sampled cells for updating global variables in stochastic variational inference (default: 100).
-#'				Note that batch.size is ignored if 'optimization.method' is 'batch'
-#' @param max.iter maximum iterations (default: 50)
-#' @param mc.cores # of CPU cores for optimization (default: 1)
+#' @param ls the prototype landscape for TCM 
+#'				(default: landscape(type = 'temporal.convolving', time.points = ncol(CT), K = 15, n.prototype = 15, n.circle = 10, n.prev = 3))
+#' @param init: initialization parameters
+#' @param	control: control parameters
 #' 
 #' @return a tcm object
+#'
+#' @export
 #
 #' @author Wuming Gong, \email{gongx030@umn.edu}
 #
 #' @examples
-#' set.seed(1)
-#' sim <- sim.rnaseq.ts(N = 2000, M = 500, n.lineage = 5, type = 'sequential', n.time.points = 5)
-#' bg.lineage <- rainbow(sim$n.lineage)
-#' bg.cell <- bg.lineage[sim$lineage]
-#' time.table <- table(1:sim$M, factor(sim$time))
-#' set.seed(1)
-#' mf <- tcm(sim$X, time = time.table, n.circle = 10, n.metacell = 15, n.prev = 3, max.iter = 10)
-#' set.seed(1)
+#'
+#' library(tcm)
+#'
+#' # simulate a simple temporal scRNA-seq data with 2,000 genes, 500 cells and five different lineages.  
+#' # The single cell data are sampled across five time points following a sequentail differentiation model. 
+#' set.seed(122)
+#' sim <- sim.rnaseq.ts(N = 2000, M = 500, n.lineage = 5, n.time.points = 5)
+#' X <- assays(sim)$count
+#' time.table <- colData(sim)$time.table
+#' mf <- tcm(X, time.table = time.table)
+#' bg.cell <- rainbow(5)[colData(sim)$lineage]
 #' dev.new(height = 10, width = 12)
 #' par(mar = c(5, 5, 5, 15))
-#' plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
-#' legend(par('usr')[2], par('usr')[4], 1:sim$n.lineage, bty = 'n', xpd = NA, pt.bg = bg.lineage, pch = 21, col = 'black', cex = 1.75)
-#'
-#' @export
+#' plot(mf, pch = 21, bg = bg.cell, cex = 1.5)
 #' 
-tcm <- function(X, time.table = NULL, landscape = NULL, init = NULL, control = NULL){
+#' legend(par('usr')[2], par('usr')[4], 1:sim$n.lineage, bty = 'n', xpd = NA, pt.bg = bg.lineage, pch = 21, col = 'black', cex = 1.75)
+#' 
+tcm <- function(X, time.table, ls, init = NULL, control = NULL){
 
 	N <- nrow(X)
 	M <- ncol(X)
 	eps <- .Machine$double.eps
 	control <- set.control(control)
 
-	if (is.null(time.table) && landscape[['type']] == 'temporal.convolving')
-		stop('time.table cannot be NULL if landscape$type is temporal.convolving')
+	if (missing(time.table))
+		CT <- as(matrix(TRUE, M, 1), 'ngCMatrix')
+	else	
+		CT <- as(as(time.table, 'matrix'), 'ngCMatrix') # cell ~ time
+
+	if (M != nrow(CT))
+		stop('ncol(X) must be equal to nrow(time.table)')
+
+	if (missing(ls)){
+		cat(sprintf('[%s] landscape(ls) is missing\n', Sys.time()))
+		cat(sprintf('[%s] using a temporal convolving landscape with K=15, n.prototype=15, n.circle=10, n.prev=3\n', Sys.time()))
+		ls <- landscape(type = 'temporal.convolving', time.points = ncol(CT), K = 15, n.prototype = 15, n.circle = 10, n.prev = 3)
+	}
+
+	sparsity <- sum(X == 0) / prod(dim(X))
+	cat(sprintf('[%s] sparsity: %.3f%%\n', Sys.time(), sparsity * 100))
+	if (sparsity < 0.6 && ncol(CT) <= 5)
+		init <- list(method = 'all', update.beta = TRUE)
+	else if (sparsity < 0.6 && ncol(CT) > 5)
+		init <- list(method = 'forward', update.beta = TRUE)
+	else if (sparsity >= 0.6 && ncol(CT) <= 5)
+		init <- list(method = 'backward', update.beta = FALSE)
+	else if (sparsity >= 0.6 && ncol(CT) > 5)
+		init <- list(method = 'forward', update.beta = FALSE)
+	cat(sprintf('[%s] gtm initialization method: %s\n', Sys.time(), init$method))
 	
-	if (is.null(landscape))
-		stop('landscape cannot be NULL')
-
-	K <- landscape$K
-
-	CT <- as(as(time.table, 'matrix'), 'ngCMatrix') # cell ~ time
-
+	K <- ls$K
 	cat(sprintf('[%s] number of input rows(N): %d\n', Sys.time(), N))
 	cat(sprintf('[%s] number of input colnums(M): %d\n', Sys.time(), M))
 	cat(sprintf('[%s] number of time points(ncol(time.table)): %d\n', Sys.time(), ncol(CT)))
@@ -201,7 +228,7 @@ tcm <- function(X, time.table = NULL, landscape = NULL, init = NULL, control = N
 	a <- mf$a # the cell effect
 
 	cat(sprintf('[%s] initializing prototype landscape (method=%s):\n', Sys.time(), init$method))
-	mf <- gtm(V = V, landscape = landscape, CT = CT, method = init$method, update.beta = init$update.beta, control = control)
+	mf <- gtm(V = V, landscape = ls, CT = CT, method = init$method, update.beta = init$update.beta, control = control)
 
 	mem <- max.col(mf$Z)
 	mem[apply(mf$Z, 1, max) < mf$landscape$assignment.threshold] <- NA
@@ -212,6 +239,8 @@ tcm <- function(X, time.table = NULL, landscape = NULL, init = NULL, control = N
 } # end of tcm
 
 
+#' softmax
+#' 
 #' Computing y[i, j] = exp(x[i, j]) / sum(exp(x[, j]))
 #'
 softmax <- function(x){
@@ -350,12 +379,28 @@ tcm.core <- function(X, U = NULL, V = NULL, a = NULL, landscape = NULL, CT = NUL
 
 
 
-#' plot tcm object.
+#' plot.tcm
 #' 
-#' @param x tcm object
+#' Plot the TCM results
+#' 
+#' @param x a tcm object
 #' @param ... Further graphical parameters may also be supplied as arguments
 #'
 #' @export
+#'
+#' @author Wuming Gong, \email{gongx030@umn.edu}
+#'
+#' @examples
+#' library(tcm)
+#' set.seed(122)
+#' sim <- sim.rnaseq.ts(N = 2000, M = 500, n.lineage = 5, n.time.points = 5)
+#' X <- assays(sim)$count
+#' time.table <- colData(sim)$time.table
+#' mf <- tcm(X, time.table = time.table)
+#' bg.cell <- rainbow(5)[colData(sim)$lineage]
+#' dev.new(height = 10, width = 12)
+#' par(mar = c(5, 5, 5, 15))
+#' plot(mf, pch = 21, bg = bg.cell, cex = 1.5)
 #' 
 plot.tcm <- function(x, ...){
 
@@ -396,26 +441,11 @@ plot.tcm <- function(x, ...){
 } # end of plot.tcm
 
 
-#' density plot of the landscape
-image.tcm <- function(x, ...){
-
-	param <- list(...)
-	if (x$landscape$type %in% c('temporal.convolving', 'plate', 'ladder')){
-		coord <- x$landscape$Y.prototype
-		smoothScatter(t(coord[, max.col(x$Z)]), axes = FALSE, nbin = 256, bandwidth = 0.01)
-	}
-
-} # end of image.tcm
-
-image.gtm <- function(x, ...) image.tcm(x, ...)
-
-
 #' Add the labels of active prototypes
 #' 
 centers <- function(mf, ...){
 	coord <- mf$landscape$Y.prototype
 	c <- which(mf$landscape$is.active)
-#	textplot(coord[1, c], coord[2, c], c, new = FALSE, ...)
 	text(coord[1, c], coord[2, c], c, ...)
 } # end of centers
 
@@ -559,14 +589,37 @@ update.localvar <- function(X, U, V = NULL, V.exp = NULL, W = NULL, landscape = 
 } # end of update.localvar
 
 
-#' describe the prototype landscape
+#' landscape
 #' 
-#' @param type type of the prototype landscape
-#' @param n.circle prototypes per layer (S)
-#' @param n.prototype the number of layers (R)
-#' @param n.prev the number of layers of convolving prototypes (R - rho)
+#' Define the prototype landscape for simulating and visualizing scRNA-seq data 
+#' 
+#' @param type type of the prototype landscape (default: temporal.convolving)
+#' 
+#' @param n.prototype prototypes per layer
+#' @param n.circle the number of layer 
+#' @param n.prev number of convolving layers per time point
+#' 
+#' @return a landscape object
 #'
-landscape <- function(type = 'temporal.convolving', K = 10, ...){
+#' @export
+#'
+#' @author Wuming Gong, \email{gongx030@umn.edu}
+#'
+#' @examples
+#' # a temporal convolving landscape with the following parameters:
+#' #  number of metagenes (K): 15
+#' #  number of prototypes per layer (n.prototype): 15
+#' #  number of layers per time point (n.circle): 10
+#' #  number of convolving layers per time point (n.prev): 3
+#' ls <- landscape(type = 'temporal.convolving', K = 15, n.prototype = 15, n.circle = 10, n.prev = 3)
+#'
+#' # a plate landscape with following parameters:
+#' #  number of metagenes (K): 15
+#' #  number of prototypes per layer (n.prototype): 10
+#' #  number of layers (n.circle): 100
+#' ls <- landscape(type = 'plate', K = 15, n.prototype = 10, n.circle = 100)
+#'
+landscape <- function(type = 'temporal.convolving', K = 15, ...){
 
 	param <- list(...)
 
@@ -582,14 +635,29 @@ landscape <- function(type = 'temporal.convolving', K = 10, ...){
 		if (is.null(time.points) || time.points < 2)
 			stop('at least two time points must be specified for landscape tcm')
 
-		n.prototype <- param[['n.prototype']]
-		n.circle <- param[['n.circle']]
-		n.prev <- param[['n.prev']]
-		
-		if (is.null(param[['lambda']]))
+		if (is.null(param$n.prototype)){
+			param$n.prototype <- 15
+			cat(sprintf('[%s] number of prototypes per circle: %d\n', Sys.time(), param$n.prototype))
+		}
+
+		if (is.null(param$n.circle)){
+			param$n.circle <- 10
+			cat(sprintf('[%s] number of circles per time point: %d\n', Sys.time(), param$n.circle))
+		}
+
+		if (is.null(param$n.prev)){
+			param$n.prev <- min(3, param$n.circle - 1)
+			cat(sprintf('[%s] number of circle(s) mapped from the previous time point: %d\n', Sys.time(), param$n.prev))
+		}
+
+		n.prototype <- param$n.prototype
+		n.circle <- param$n.circle
+		n.prev <- param$n.prev
+
+		if (is.null(param$lambda))
 			lambda <- 1
 		else
-			lambda <- param[['lambda']]
+			lambda <- param$lambda
 
 		H <- n.circle * n.prototype # number of prototypes per time point
 		H.prototype <- H * time.points	# total number of prototypes
@@ -1128,10 +1196,8 @@ set.control <- function(control){
 	control.default <- list(
 		optimization.method = 'batch', 
 		batch.size = 2000, 
-#		ccm.max.iter = 50,
-#		max.iter = 100, 
 		ccm.max.iter = 10,
-		max.iter = 100, 
+		max.iter = 50, 
 		mc.cores = 1, 
 		decay.rate = 1, 
 		forgetting.rate = 0.75, 
@@ -1230,14 +1296,17 @@ trajectory <- function(x, ...){
 } # end of trajectory
 
 
+#' fastmds
+#' 
 #' A sampling-based fastMDS algorithm based on Yang et al.
 #'
 #' @param X The input gene by cell matrix
 #' @param K Number of dimensions
 #' @param f a vector indicating the pre-defined groups of input data
+#' @param scale whether or not rescale the initialized metagene coefficients (default: FALSE)
 #' @param control control parameters
 #'
-fastmds <- function(X, K, f = NULL, method = 'mds', scale = FALSE, control = NULL){
+fastmds <- function(X, K, f = NULL, scale = FALSE, control = NULL){
 
 	M <- ncol(X)
 	if (any(table(f) <= K))
@@ -1248,28 +1317,19 @@ fastmds <- function(X, K, f = NULL, method = 'mds', scale = FALSE, control = NUL
 	s <- split.data(M, f = f, control = control)	# split the data
 
 	if (M < control$max.size.dist.matrix && is.null(f)){
-		if (method == 'mds')
-			V <- tryCatch({
-				t(cmdscale(as.dist(rdist(t(X))), eig = FALSE, k = K))
-			}, error = function(e){
-				stop('cmdscale failed')
-			})
-		else if (method == 'tsne')
-			V <- t(Rtsne(t(X), check_duplicates = FALSE)$Y)
+		V <- tryCatch({
+			t(cmdscale(as.dist(rdist(t(X))), eig = FALSE, k = K))
+		}, error = function(e){
+			stop('cmdscale failed')
+		})
 	}else{
 		control$max.size.per.batch <- min(control$max.size.dist.matrix, control$max.size.per.batch)
 		V.list <- mclapply(1:s$n.batch, function(b){
-			if (method == 'mds')
-				t(cmdscale(as.dist(rdist(t(X[, s$groups == b]))), eig = FALSE, k = K))
-			else if (method == 'tsne')
-				t(Rtsne(t(X[, s$groups == b]), check_duplicates = FALSE)$Y)
+			t(cmdscale(as.dist(rdist(t(X[, s$groups == b]))), eig = FALSE, k = K))
 		}, mc.cores = control$mc.cores)	# MDS of cells within each batch
 		m <- lapply(1:s$n.batch, function(b) sample(1:s$size[b], max(2, min(s$size[b], ceiling(control$max.size.dist.matrix / s$n.batch)))))	# for sampling a subset of cells from each batch
 		m.align <- lapply(1:s$n.batch, function(b) which(s$groups == b)[m[[b]]])	# convert the local index to global index
-		if (method == 'mds')
-			V.align <- t(cmdscale(as.dist(rdist(t(X[, unlist(m.align)]))), eig = FALSE, k = K))	# compute the MDS of sampled cells
-		else if (method == 'tsne')
-			V.align <- t(Rtsne(t(X[, unlist(m.align)]), check_duplicates = FALSE)$Y)
+		V.align <- t(cmdscale(as.dist(rdist(t(X[, unlist(m.align)]))), eig = FALSE, k = K))	# compute the MDS of sampled cells
 		V.align <- lapply(split(1:ncol(V.align), list(rep(1:s$n.batch, sapply(m, length)))), function(i) V.align[, i, drop = FALSE])
 		V.list <- mclapply(1:s$n.batch, function(b){	# map the local MDS to global MDS
 			s <- svd(V.list[[b]][, m[[b]]])
@@ -1288,17 +1348,22 @@ fastmds <- function(X, K, f = NULL, method = 'mds', scale = FALSE, control = NUL
 
 
 
+#' gtm
+#'
 #' Update the prototype landscape
 #'
-gtm <- function(V = NULL, landscape = NULL, CT = NULL, method = 'backward', update.beta = FALSE, control = NULL){
+gtm <- function(V = NULL, landscape = NULL, CT = NULL, method = NULL, update.beta = TRUE, control = NULL){
 
 	M <- ncol(V)	# number of cells
 
 	if (landscape$type == 'plate')
 		method <- 'all'
+	
+	if (is.null(method))
+		method <- 'all'
 
 	if (is.null(update.beta))
-		update.beta <- FALSE
+		update.beta <- TRUE
 
 	if (!update.beta)
 		V <- scale(V)
