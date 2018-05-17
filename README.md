@@ -188,7 +188,7 @@ ls <- landscape(type = 'temporal.convolving', time.points = ncol(time.table), K 
 mf <- tcm(X, time.table = time.table, ls = ls)
 plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
 ```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/tcm_trapnell.png)
+![alt text](/docs/images/tcm_trapnell.png)
 
 Visualizaion of expression levels of some key genes:
 ```r
@@ -199,7 +199,7 @@ plot(mf, pch = 21, bg = num2color(log(X['ENSG00000134853', ] + 1)), cex = 1.25, 
 plot(mf, pch = 21, bg = num2color(log(X['ENSG00000125414', ] + 1)), cex = 1.25, main = 'MYH2')
 plot(mf, pch = 21, bg = num2color(log(X['ENSG00000115461', ] + 1)), cex = 1.25, main = 'IGFBP5')
 ```
-![alt text](https://github.com/gongx030/tcm/blob/master/docs/images/tcm_trapnell_expression.png)
+![alt text](/docs/images/tcm_trapnell_expression.png)
 
 
 # 4. Session Information
