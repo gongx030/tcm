@@ -7,8 +7,22 @@ Author: Wuming Gong <gongx030@umn.edu>
 Maintainer: Wuming Gong <gongx030@umn.edu>
 Description: Profiling single cell gene expression data over specified time periods are increasingly applied to the study of complex developmental processes. Here, we describe a novel prototype-based dimension reduction method to visualize high throughput temporal expression data for single cell analyses.  Our software preserves the global developmental trajectories over a specified time course, and it also identifies subpopulations of cells within each time point demonstrating superior visualization performance over six commonly used methods. 
 License: MIT License
-Imports: irlba, fields, gtools, cluster, FNN, MASS, Matrix, stats, igraph, gplots, plotrix, graphics
+Imports: 
+	irlba, 
+	fields, 
+	gtools, 
+	cluster, 
+	FNN, 
+	MASS, 
+	Matrix, 
+	stats, 
+	igraph, 
+	gplots, 
+	plotrix, 
+	graphics,
+	SummarizedExperiment,
+	parallel
 NeedsCompilation: no
-Depends: R (>= 3.4.3)
+Depends: R (>= 3.4)
 RoxygenNote: 6.0.1
 Packaged: 2017-11-09 18:42:25 UTC; gongx030
