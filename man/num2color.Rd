@@ -2,11 +2,22 @@
 % Please edit documentation in R/tcm.r
 \name{num2color}
 \alias{num2color}
-\title{Scale a continuous vector into color representation}
+\title{num2color}
 \usage{
 num2color(x, cp = colorpanel(100, low = "blue", mid = "black", high =
   "yellow"))
 }
+\arguments{
+\item{x}{a numeric vector}
+
+\item{cp}{the color spectrum (default: colorpanel(100, low = 'blue', mid = 'black', high = 'yellow'))}
+}
+\value{
+a character vector of HTML-style RGB colors
+}
 \description{
 Scale a continuous vector into color representation
+}
+\author{
+Wuming Gong, \email{gongx030@umn.edu}
 }
