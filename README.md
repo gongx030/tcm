@@ -18,6 +18,7 @@ A number of needed packages are installed in this process.
 We first load the tcm package:
 ```r
 library(tcm)
+library(SummarizedExperiment)
 ```
 
 ### 2.1 Visualizing a simulated temporal scRNA-seq dataset with 2,000 genes, 500 cells and five lineages.
@@ -200,6 +201,39 @@ plot(mf, pch = 21, bg = num2color(log(X['ENSG00000125414', ] + 1)), cex = 1.25, 
 plot(mf, pch = 21, bg = num2color(log(X['ENSG00000115461', ] + 1)), cex = 1.25, main = 'IGFBP5')
 ```
 ![alt text](/docs/images/tcm_trapnell_expression.png)
+
+## 3.5 Single cell RNA-seq of human iPSC-CM differentiations
+```r
+library(scDatasets)
+data(iPSC)
+X <- assays(iPSC)$count
+time.table <- colData(iPSC)$time.table
+X <- preprocess(X, min.expressed.gene = 0)
+cg <- colData(iPSC)[['time']]
+col.cg <- rainbow(nlevels(cg))
+names(col.cg) <- levels(cg)
+bg.cell <- col.cg[as.numeric(cg)]
+set.seed(1)
+ls <- landscape(type = 'temporal.convolving', time.points = ncol(time.table), K = 15, n.prototype = 15, n.circle = 10, n.prev = 2)
+mf <- tcm(X, time.table = time.table, ls = ls, init = list(method = 'backward', update.beta = TRUE))
+plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
+legend(par('usr')[2], par('usr')[4], colnames(time.table), bty = 'n', xpd = NA, pt.bg = col.cg, pch = 21, col = 'black', cex = 1.75)
+```
+![alt text](/docs/images/tcm_iPSC.png)
+
+Visualizaion of expression levels of some key genes:
+```r
+par(mfrow = c(2, 3))
+par(mar = c(2, 2, 2, 2))
+plot(mf, pch = 21, bg = num2color(log(X['POU5F1', ] + 1)), cex = 1.75, main = 'POU5F1')
+plot(mf, pch = 21, bg = num2color(log(X['ISL1', ] + 1)), cex = 1.75, main = 'ISL1')
+plot(mf, pch = 21, bg = num2color(log(X['MYL2', ] + 1)), cex = 1.75, main = 'MYL2')
+plot(mf, pch = 21, bg = num2color(log(X['CDH11', ] + 1)), cex = 1.75, main = 'CDH11')
+plot(mf, pch = 21, bg = num2color(log(X['NR2F2', ] + 1)), cex = 1.75, main = 'NR2F2')
+plot(mf, pch = 21, bg = num2color(log(X['NPPA', ] + 1)), cex = 1.75, main = 'NPPA')
+```
+![alt text](/docs/images/tcm_iPSC_expression.png)
+
 
 
 # 4. Session Information
