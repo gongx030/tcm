@@ -15,7 +15,7 @@ A number of needed packages are installed in this process.
 
 ## 2. Quick Start
 
-We first load the tcm package:
+We first load the tcm and related packages:
 ```r
 library(tcm)
 library(SummarizedExperiment)
