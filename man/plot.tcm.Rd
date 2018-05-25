@@ -4,7 +4,7 @@
 \alias{plot.tcm}
 \title{plot.tcm}
 \usage{
-plot.tcm(x, ...)
+\method{plot}{tcm}(x, ...)
 }
 \arguments{
 \item{x}{a tcm object}

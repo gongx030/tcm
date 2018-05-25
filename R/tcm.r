@@ -1,15 +1,25 @@
-library(irlba)	# irlba
-library(fields)	# rdist
-library(gtools)	# ddirichlet
-library(FNN)	# knnx.index
-library(cluster) # pam
-library(MASS) # mvrnorm
-library(Matrix)
-library(igraph)	# get.shortest.paths
-library(gplots)	# colorpanel
-library(plotrix)	# draw.circle
-library(SummarizedExperiment) 	
-library(parallel) # mclapply
+#' TCM: A package for visualizing temporal scRNA-seq data
+#'
+#' @import Matrix
+#' @import methods
+#' @import GenomicRanges
+#' @import SummarizedExperiment
+#' @importFrom irlba irlba
+#' @importFrom fields rdist
+#' @importFrom gtools ddirichlet rdirichlet
+#' @importFrom FNN knnx.index
+#' @importFrom cluster pam
+#' @importFrom MASS mvrnorm
+#' @importFrom igraph get.shortest.paths graph.adjacency
+#' @importFrom S4Vectors DataFrame
+#' @importFrom gplots colorpanel
+#' @importFrom plotrix draw.circle
+#' @importFrom parallel mclapply
+#' @importClassesFrom SummarizedExperiment SummarizedExperiment
+#' @docType package
+#' @name tcm
+NULL
+
 
 
 #' add.paths
@@ -25,6 +35,17 @@ library(parallel) # mclapply
 #' @author Wuming Gong, \email{gongx030@umn.edu}
 #'
 add.paths <- function(x, ...) UseMethod('add.paths', x)
+
+#' as.igraph
+#'
+#' A generic function for converting prototype landscape to a igraph object
+#'
+#' @param x an object
+#' @param ... additional arguments
+#'
+#' @author Wuming Gong, \email{gongx030@umn.edu}
+#'
+as.igraph <- function(x, ...) UseMethod('as.igraph', x)
 
 
 #' sim.rnaseq.ts
@@ -127,7 +148,7 @@ sim.rnaseq.ts <- function(N = 2000, M = 500, ls, lambda.dropout = 0.25, alpha0 =
 	rownames(X) <- rownames(Mu) <- sprintf('G%d', 1:N)
 
 	SummarizedExperiment(
-		assays = list(count = X, Mu = as.matrix(Mu), D = D), 
+		assays <- list(count = X, Mu = as.matrix(Mu), D = D),
 		rowData = DataFrame(U = I(U)),
 		colData = DataFrame(V = I(t(V)), z = z, lineage = lineage, circle = max.col(ls$MC)[z], time = I(time), time.table = I(table(1:M, factor(time)))),
 		metadata = list(N = N, M = M, landscape = ls, n.lineage = n.lineage, lambda.dropout = lambda.dropout, type = type, n.time.points = n.time.points, P = P)
@@ -194,15 +215,19 @@ tcm <- function(X, time.table, ls, init = NULL, control = NULL){
 
 	sparsity <- sum(X == 0) / prod(dim(X))
 	cat(sprintf('[%s] sparsity: %.3f%%\n', Sys.time(), sparsity * 100))
-	if (sparsity < 0.6 && ncol(CT) <= 5)
-		init <- list(method = 'all', update.beta = TRUE)
-	else if (sparsity < 0.6 && ncol(CT) > 5)
-		init <- list(method = 'forward', update.beta = TRUE)
-	else if (sparsity >= 0.6 && ncol(CT) <= 5)
-		init <- list(method = 'backward', update.beta = FALSE)
-	else if (sparsity >= 0.6 && ncol(CT) > 5)
-		init <- list(method = 'forward', update.beta = FALSE)
+
+	if (missing(init)){
+		if (sparsity < 0.6 && ncol(CT) <= 5)
+			init <- list(method = 'all', update.beta = TRUE)
+		else if (sparsity < 0.6 && ncol(CT) > 5)
+			init <- list(method = 'forward', update.beta = TRUE)
+		else if (sparsity >= 0.6 && ncol(CT) <= 5)
+			init <- list(method = 'backward', update.beta = FALSE)
+		else if (sparsity >= 0.6 && ncol(CT) > 5)
+			init <- list(method = 'forward', update.beta = FALSE)
+	}
 	cat(sprintf('[%s] gtm initialization method: %s\n', Sys.time(), init$method))
+
 	
 	K <- ls$K
 	cat(sprintf('[%s] number of input rows(N): %d\n', Sys.time(), N))
@@ -461,7 +486,17 @@ jitter2 <- function(x, amount = 0.1){
 } # end of jitter2
 
 
+#' num2color
+#'
 #' Scale a continuous vector into color representation
+#' @param x a numeric vector
+#' @param cp the color spectrum (default: colorpanel(100, low = 'blue', mid = 'black', high = 'yellow'))
+#'
+#' @return a character vector of HTML-style RGB colors 
+#'
+#' @export
+#'
+#' @author Wuming Gong, \email{gongx030@umn.edu}
 #'
 num2color <- function(x, cp = colorpanel(100, low = 'blue', mid = 'black', high = 'yellow')) cp[round((x - min(x)) / (max(x) - min(x)) * (length(cp) - 1)) + 1]
 
@@ -688,9 +723,9 @@ landscape <- function(type = 'temporal.convolving', K = 15, ...){
 		S <- Diagonal(n = H.prototype)
     S <- S[is.free, ] # a H.free ~ H.prototype stochastic matrix mapping from free prototypes to ALL prototypes
 
-		for (t in 2:time.points){
-			hc <- TMC[t, ] 	# prototypes from current time point
-			hp <- TMC[t - 1, ] 	# prototypes from previous time point
+		for (tp in 2:time.points){
+			hc <- TMC[tp, ] 	# prototypes from current time point
+			hp <- TMC[tp - 1, ] 	# prototypes from previous time point
 			hc.conv <- hc & !is.free # convolving prototypes from current time point
 			S[, hc.conv] <- S[, hp] %*% S.conv
 		}
@@ -1388,9 +1423,7 @@ gtm <- function(V = NULL, landscape = NULL, CT = NULL, method = NULL, update.bet
 			mem[P[i - 1, ]] <- memp
 		}
 		mf <- gtm.core(V = V[, P[i, ]], landscape = landscape, CT = CT[P[i, ], ], mem = mem[P[i, ]], update.beta = update.beta, control = control)
-#		dev.new(height = 10, width = 10); par(mar = c(2, 2, 2, 2)); plot(mf, pch = 21, bg = bg.cell[P[i, ]], cex = 2.25)
 		landscape <- mf$landscape
-#		c <- c(which(mf$landscape$is.active), unlist(parents)); coord <- mf$landscape$Y.prototype; text(coord[1, c], coord[2, c], c, col = 'yellow', cex = 2)
 	}
 	mf
 

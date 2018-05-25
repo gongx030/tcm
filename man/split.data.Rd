@@ -4,7 +4,7 @@
 \alias{split.data}
 \title{Splitting data into different batches}
 \usage{
-\method{split}{data}(M, f = NULL, control)
+split.data(M, f = NULL, control)
 }
 \description{
 Splitting data into different batches
