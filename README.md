@@ -241,7 +241,7 @@ data(petropoulos)
 X <- assays(petropoulos)$count
 time.table <- colData(petropoulos)$time.table
 X <- preprocess(X, min.expressed.gene = 0)
-cg <- colData(iPSC)[['time']]
+cg <- colData(petropoulos)[['time']]
 col.cg <- rainbow(nlevels(cg))
 names(col.cg) <- levels(cg)
 bg.cell <- col.cg[as.numeric(cg)]
