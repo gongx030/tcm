@@ -234,6 +234,31 @@ plot(mf, pch = 21, bg = num2color(log(X['NPPA', ] + 1)), cex = 1.75, main = 'NPP
 ```
 ![alt text](/docs/images/tcm_iPSC_expression.png)
 
+## 3.6 Single-cell RNA-Seq of human preimplantation embryo development at E3, E4, E5, E6 and E7
+```r
+library(scDatasets)
+data(petropoulos)
+X <- assays(petropoulos)$count
+time.table <- colData(petropoulos)$time.table
+X <- preprocess(X, min.expressed.gene = 0)
+cg <- colData(iPSC)[['time']]
+col.cg <- rainbow(nlevels(cg))
+names(col.cg) <- levels(cg)
+bg.cell <- col.cg[as.numeric(cg)]
+set.seed(1)
+mf <- tcm(X, time.table = time.table, ls = ls)
+plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
+legend(par('usr')[2], par('usr')[4], colnames(time.table), bty = 'n', xpd = NA, pt.bg = col.cg, pch = 21, col = 'black', cex = 1.75)
+```
+![alt text](/docs/images/tcm_petropoulos.png)
+
+Visualizaion of expression levels of some key genes:
+```r
+par(mfrow = c(1, 2), mar = c(2, 2, 2, 2))
+plot(mf, pch = 21, bg = num2color(log(X['SOX2', ] + 1)), cex = 0.75, main = 'SOX2')
+plot(mf, pch = 21, bg = num2color(log(X['CDX2', ] + 1)), cex = 0.75, main = 'CDX2')
+```
+![alt text](/docs/images/tcm_petropoulos_expression.png)
 
 
 # 4. Session Information
