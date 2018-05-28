@@ -260,6 +260,32 @@ plot(mf, pch = 21, bg = num2color(log(X['CDX2', ] + 1)), cex = 0.75, main = 'CDX
 ```
 ![alt text](/docs/images/tcm_petropoulos_expression.png)
 
+## 3.7 Single-cell RNA-Seq of mouse embryonic development from zygote to late blastocyst stage
+```r
+library(scDatasets)
+data(deng)
+X <- assays(deng)$count
+time.table <- colData(deng)$time.table
+X <- preprocess(X, min.expressed.gene = 0)
+cg <- colData(deng)[['time']]
+col.cg <- rainbow(nlevels(cg))
+names(col.cg) <- levels(cg)
+bg.cell <- col.cg[as.numeric(cg)]
+set.seed(1)
+mf <- tcm(X, time.table = time.table, init = list(method = 'backward', update.beta = TRUE))
+plot(mf, pch = 21, bg = bg.cell, cex = 2.25)
+legend(par('usr')[2], par('usr')[4], colnames(time.table), bty = 'n', xpd = NA, pt.bg = col.cg, pch = 21, col = 'black', cex = 1.75)
+```
+![alt text](/docs/images/tcm_petropoulos.png)
+
+Visualizaion of expression levels of some key genes:
+```r
+par(mfrow = c(1, 2), mar = c(2, 2, 2, 2))
+plot(mf, pch = 21, bg = num2color(log(X['Sox2', ] + 1)), cex = 1.25, main = 'Sox2')
+plot(mf, pch = 21, bg = num2color(log(X['Cdx2', ] + 1)), cex = 1.25, main = 'Cdx2')
+```
+![alt text](/docs/images/tcm_petropoulos_expression.png)
+
 
 # 4. Session Information
 ```r
