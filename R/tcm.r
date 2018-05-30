@@ -272,6 +272,7 @@ softmax <- function(x){
 	x.max <- apply(x, 2, max)
 	y <- log(Matrix::rowSums(exp(t(x) - x.max)) + .Machine$double.eps) + x.max	# log(sum(exp(x[, j])))
 	y <- t(exp(t(x) - y))
+	y
 } # end of softmax 
 
 
