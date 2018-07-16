@@ -2,6 +2,14 @@
 
 TCM is an R package for visualizing temporal single cell RNA-seq data.
 
+The paper can be found [https://www.nature.com/articles/s41467-018-05112-9](https://www.nature.com/articles/s41467-018-05112-9).
+
+```TCM visualizes trajectories and cell populations from single cell data
+Wuming Gong, Il-Youp Kwak, Naoko Koyano-Nakagawa, Wei Pan & Daniel J. Garry 
+Nature Communicationsvolume 9, Article number: 2749 (2018) 
+```
+
+
 ## 1. Installation
 
 The recommended installation method for `tcm` is using `install_github` command from `devtools` library.  You will first have to have [devtools](https://github.com/hadley/devtools) package installed.
