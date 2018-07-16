@@ -6,7 +6,7 @@ The paper can be found [https://www.nature.com/articles/s41467-018-05112-9](http
 
 ```TCM visualizes trajectories and cell populations from single cell data
 Wuming Gong, Il-Youp Kwak, Naoko Koyano-Nakagawa, Wei Pan & Daniel J. Garry 
-Nature Communicationsvolume 9, Article number: 2749 (2018) 
+Nature Communications volume 9, Article number: 2749 (2018) 
 ```
 
 
