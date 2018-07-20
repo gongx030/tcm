@@ -1,28 +1,28 @@
 Package: tcm
 Type: Package
 Title: TCM visualizes trajectories and cell populations from single cell data
-Version: 2.0.1
-Date: 2018-05-17
+Version: 2.0.2
+Date: 2018-07-20
 Author: Wuming Gong <gongx030@umn.edu>
 Maintainer: Wuming Gong <gongx030@umn.edu>
 Description: Profiling single cell gene expression data over specified time periods are increasingly applied to the study of complex developmental processes. Here, we describe a novel prototype-based dimension reduction method to visualize high throughput temporal expression data for single cell analyses.  Our software preserves the global developmental trajectories over a specified time course, and it also identifies subpopulations of cells within each time point demonstrating superior visualization performance over six commonly used methods. 
 License: MIT License
 Imports: 
+	Matrix, 
+	GenomicRanges,
+	SummarizedExperiment,
 	irlba, 
 	fields, 
 	gtools, 
-	cluster, 
 	FNN, 
+	cluster, 
 	MASS, 
-	Matrix, 
-	stats, 
 	igraph, 
+	S4Vectors,
 	gplots, 
 	plotrix, 
-	graphics,
-	parallel
-Suggests:
-	SummarizedExperiment
+	parallel,
+	stats, 
 NeedsCompilation: no
 Depends: R (>= 3.4)
 RoxygenNote: 6.0.1

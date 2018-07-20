@@ -1,9 +1,9 @@
 #' TCM: A package for visualizing temporal scRNA-seq data
 #'
 #' @import Matrix
-#' @import methods
 #' @import GenomicRanges
 #' @import SummarizedExperiment
+#' @importClassesFrom SummarizedExperiment SummarizedExperiment
 #' @importFrom irlba irlba
 #' @importFrom fields rdist
 #' @importFrom gtools ddirichlet rdirichlet
@@ -15,7 +15,6 @@
 #' @importFrom gplots colorpanel
 #' @importFrom plotrix draw.circle
 #' @importFrom parallel mclapply
-#' @importClassesFrom SummarizedExperiment SummarizedExperiment
 #' @docType package
 #' @name tcm
 NULL
