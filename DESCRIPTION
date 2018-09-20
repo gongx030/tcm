@@ -9,7 +9,6 @@ Description: Profiling single cell gene expression data over specified time peri
 License: MIT License
 Imports: 
 	Matrix, 
-	GenomicRanges,
 	SummarizedExperiment,
 	irlba, 
 	fields, 
@@ -22,7 +21,7 @@ Imports:
 	gplots, 
 	plotrix, 
 	parallel,
-	stats, 
+	stats
 NeedsCompilation: no
 Depends: R (>= 3.4)
 RoxygenNote: 6.0.1

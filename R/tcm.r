@@ -1,7 +1,6 @@
 #' TCM: A package for visualizing temporal scRNA-seq data
 #'
 #' @import Matrix
-#' @import GenomicRanges
 #' @import SummarizedExperiment
 #' @importClassesFrom SummarizedExperiment SummarizedExperiment
 #' @importFrom irlba irlba
@@ -34,6 +33,7 @@ NULL
 #' @author Wuming Gong, \email{gongx030@umn.edu}
 #'
 add.paths <- function(x, ...) UseMethod('add.paths', x)
+
 
 #' as.igraph
 #'
@@ -226,7 +226,6 @@ tcm <- function(X, time.table, ls, init = NULL, control = NULL){
 			init <- list(method = 'forward', update.beta = FALSE)
 	}
 	cat(sprintf('[%s] gtm initialization method: %s\n', Sys.time(), init$method))
-
 	
 	K <- ls$K
 	cat(sprintf('[%s] number of input rows(N): %d\n', Sys.time(), N))
@@ -804,7 +803,7 @@ landscape <- function(type = 'temporal.convolving', K = 15, ...){
 
 		time.points <- param$time.points
 		if (is.null(time.points) || time.points < 2)
-			stop('at least two time points must be specified for ladder landscape')
+			stop('at least two time points must be specified for temporal plate landscape')
 
 		n.prototype <- param$n.prototype
 		n.circle <- param$n.circle
@@ -1110,6 +1109,11 @@ print.landscape <- function(x, ...){
 		cat(sprintf('number of prototypes per circle: %d\n', x[['n.prototype']]))
 		cat(sprintf('number of prototypes for each time point: %d\n', x[['H']]))
 		cat(sprintf('number of circle(s) mapped from the previous time point: %d\n', x[['n.prev']]))
+	}else if (x[['type']] == 'temporal.plate'){
+		cat(sprintf('number of time points: %d\n', nrow(x[['TMC']])))
+		cat(sprintf('number of circle per time point: %d\n', x[['n.circle']]))
+		cat(sprintf('number of prototypes per circle: %d\n', x[['n.prototype']]))
+		cat(sprintf('number of prototypes for each time point: %d\n', x[['H']]))
 	}else if (x[['type']] == 'plate'){
 		cat(sprintf('number of circles: %d\n', x[['n.circle']]))
 		cat(sprintf('number of prototypes per circle: %d\n', x[['n.prototype']]))
