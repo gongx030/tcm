@@ -275,7 +275,7 @@ data(deng)
 X <- assays(deng)$count
 time.table <- colData(deng)$time.table
 X <- preprocess(X, min.expressed.gene = 0)
-cg <- colData(deng)[['time']]
+cg <- factor(colnames(time.table)[max.col(time.table)], colnames(time.table))
 col.cg <- rainbow(nlevels(cg))
 names(col.cg) <- levels(cg)
 bg.cell <- col.cg[as.numeric(cg)]
